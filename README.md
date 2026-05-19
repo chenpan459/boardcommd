@@ -22,13 +22,25 @@ Applications
 - `Protocol`：统一 frame、seq、checksum 基础封装
 - `Transport`：UDP 可运行，TCP/UART 插件骨架已接入
 
+## Layout
+
+```text
+src/
+  daemon/     # boardcommd 服务进程
+  transport/  # TCP / UDP / UART 插件
+  log/        # 统一日志模块
+
+api/          # 应用侧 SDK 源码和对外头文件
+examples/     # 示例 / 测试程序
+```
+
 ## Build
 
 ```sh
 ./build.sh 1.0.0
 ```
 
-如果不带参数运行，脚本会提示输入版本号。
+不带版本号运行会显示正确用法并退出。
 
 ## Run
 

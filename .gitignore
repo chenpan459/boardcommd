@@ -4,3 +4,4 @@ build/
 boardcommd
 boardcomm_pub
 boardcomm_sub
+log/*.log

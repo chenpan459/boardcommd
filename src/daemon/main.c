@@ -6,8 +6,8 @@
 #include "reactor.h"
 #include "router.h"
 #include "transport_manager.h"
+#include "log.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -51,19 +51,24 @@ int main(int argc, char **argv)
     bc_client_manager_t client_manager;
     bc_transport_event_ctx_t transport_contexts[BC_MAX_TRANSPORTS];
 
+    (void)bc_log_init("log", "boardcommd");
+
     if (bc_config_load(config_path, &config) != BC_OK) {
-        fprintf(stderr, "failed to load config: %s\n", config_path);
+        BC_LOGE("boardcommd", "failed to load config: %s", config_path);
+        bc_log_close();
         return EXIT_FAILURE;
     }
 
     if (bc_reactor_init(&reactor) != BC_OK) {
-        fprintf(stderr, "failed to initialize reactor\n");
+        BC_LOGE("boardcommd", "failed to initialize reactor");
+        bc_log_close();
         return EXIT_FAILURE;
     }
 
     if (bc_transport_manager_init(&transport_manager, &config) != BC_OK) {
-        fprintf(stderr, "failed to initialize transports\n");
+        BC_LOGE("boardcommd", "failed to initialize transports");
         bc_reactor_close(&reactor);
+        bc_log_close();
         return EXIT_FAILURE;
     }
 
@@ -71,9 +76,10 @@ int main(int argc, char **argv)
     bc_message_bus_init(&bus, &router);
 
     if (bc_client_manager_init(&client_manager, config.socket_path, &reactor, &bus) != BC_OK) {
-        fprintf(stderr, "failed to initialize client IPC: %s\n", config.socket_path);
+        BC_LOGE("boardcommd", "failed to initialize client IPC: %s", config.socket_path);
         bc_transport_manager_close(&transport_manager);
         bc_reactor_close(&reactor);
+        bc_log_close();
         return EXIT_FAILURE;
     }
 
@@ -89,8 +95,9 @@ int main(int argc, char **argv)
             &transport_contexts[i]);
     }
 
-    printf(
-        "boardcommd started: version=%s socket=%s transports=%zu\n",
+    BC_LOGI(
+        "boardcommd",
+        "started: version=%s socket=%s transports=%zu",
         BOARDCOMM_VERSION,
         config.socket_path,
         transport_manager.count);
@@ -99,5 +106,6 @@ int main(int argc, char **argv)
     bc_client_manager_close(&client_manager);
     bc_transport_manager_close(&transport_manager);
     bc_reactor_close(&reactor);
+    bc_log_close();
     return EXIT_SUCCESS;
 }

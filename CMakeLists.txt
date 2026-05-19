@@ -20,35 +20,44 @@ configure_file(
 add_compile_definitions(_GNU_SOURCE)
 add_compile_options(-Wall -Wextra -Wpedantic)
 
+set(BOARDCOMM_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/daemon
-    ${CMAKE_CURRENT_SOURCE_DIR}/transport
+    ${CMAKE_CURRENT_SOURCE_DIR}/api
+    ${BOARDCOMM_SRC_DIR}/daemon
+    ${BOARDCOMM_SRC_DIR}/transport
+    ${BOARDCOMM_SRC_DIR}/log
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
-add_library(boardcomm SHARED
-    sdk/boardcomm_client.c
+add_library(boardcomm_log STATIC
+    src/log/log.c
 )
 
-target_include_directories(boardcomm PUBLIC include)
+add_library(boardcomm SHARED
+    api/boardcomm_client.c
+)
+
+target_include_directories(boardcomm PUBLIC api)
+target_link_libraries(boardcomm PRIVATE boardcomm_log)
 
 add_executable(boardcommd
-    daemon/main.c
-    daemon/reactor.c
-    daemon/client_manager.c
-    daemon/message_bus.c
-    daemon/router.c
-    daemon/protocol.c
-    daemon/transport_manager.c
-    daemon/config.c
-    transport/udp_transport.c
-    transport/tcp_transport.c
-    transport/uart_transport.c
+    src/daemon/main.c
+    src/daemon/reactor.c
+    src/daemon/client_manager.c
+    src/daemon/message_bus.c
+    src/daemon/router.c
+    src/daemon/protocol.c
+    src/daemon/transport_manager.c
+    src/daemon/config.c
+    src/transport/udp_transport.c
+    src/transport/tcp_transport.c
+    src/transport/uart_transport.c
 )
+target_link_libraries(boardcommd PRIVATE boardcomm_log)
 
 add_executable(boardcomm_pub examples/pub.c)
-target_link_libraries(boardcomm_pub boardcomm)
+target_link_libraries(boardcomm_pub boardcomm boardcomm_log)
 
 add_executable(boardcomm_sub examples/sub.c)
-target_link_libraries(boardcomm_sub boardcomm)
+target_link_libraries(boardcomm_sub boardcomm boardcomm_log)
