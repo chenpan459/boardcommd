@@ -1,6 +1,7 @@
 #include "transport.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +52,11 @@ static int tcp_open(bc_transport_t *transport)
         return BC_ERR_INVALID;
     }
 
-    (void)connect(transport->fd, (struct sockaddr *)&remote, sizeof(remote));
+    if (connect(transport->fd, (struct sockaddr *)&remote, sizeof(remote)) < 0 && errno != EINPROGRESS) {
+        close(transport->fd);
+        transport->fd = -1;
+        return BC_ERR_IO;
+    }
     return BC_OK;
 }
 
@@ -65,9 +70,21 @@ static void tcp_close(bc_transport_t *transport)
 
 static int tcp_send(bc_transport_t *transport, const uint8_t *data, size_t len)
 {
-    ssize_t n = send(transport->fd, data, len, MSG_NOSIGNAL);
+    size_t off = 0;
 
-    return n == (ssize_t)len ? BC_OK : BC_ERR_IO;
+    while (off < len) {
+        ssize_t n = send(transport->fd, data + off, len - off, MSG_NOSIGNAL);
+
+        if (n > 0) {
+            off += (size_t)n;
+            continue;
+        }
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        return BC_ERR_IO;
+    }
+    return BC_OK;
 }
 
 static const bc_transport_ops_t tcp_ops = {

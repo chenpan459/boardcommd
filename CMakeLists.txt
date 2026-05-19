@@ -61,3 +61,12 @@ target_link_libraries(boardcomm_pub boardcomm boardcomm_log)
 
 add_executable(boardcomm_sub examples/sub.c)
 target_link_libraries(boardcomm_sub boardcomm boardcomm_log)
+
+add_executable(boardcomm_perf_pub examples/perf_pub.c)
+target_link_libraries(boardcomm_perf_pub boardcomm boardcomm_log)
+
+add_executable(boardcomm_perf_sub examples/perf_sub.c)
+target_link_libraries(boardcomm_perf_sub boardcomm boardcomm_log)
+
+add_executable(boardcomm_stability_pub examples/stability_pub.c)
+target_link_libraries(boardcomm_stability_pub boardcomm boardcomm_log)

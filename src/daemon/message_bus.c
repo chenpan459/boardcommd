@@ -5,28 +5,20 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-
-static int write_all(int fd, const void *data, size_t len)
-{
-    const uint8_t *p = data;
-    size_t off = 0;
-
-    while (off < len) {
-        ssize_t n = write(fd, p + off, len - off);
-
-        if (n <= 0) {
-            return BC_ERR_IO;
-        }
-        off += (size_t)n;
-    }
-    return BC_OK;
-}
 
 void bc_message_bus_init(bc_message_bus_t *bus, bc_router_t *router)
 {
     memset(bus, 0, sizeof(*bus));
     bus->router = router;
+}
+
+void bc_message_bus_set_deliver_fn(
+    bc_message_bus_t *bus,
+    bc_message_deliver_fn deliver_fn,
+    void *deliver_user)
+{
+    bus->deliver_fn = deliver_fn;
+    bus->deliver_user = deliver_user;
 }
 
 int bc_message_bus_subscribe(bc_message_bus_t *bus, int client_fd, const char *topic)
@@ -36,6 +28,13 @@ int bc_message_bus_subscribe(bc_message_bus_t *bus, int client_fd, const char *t
     }
     if (bus->subscription_count >= BC_MAX_SUBSCRIPTIONS) {
         return BC_ERR_NOMEM;
+    }
+
+    for (size_t i = 0; i < bus->subscription_count; ++i) {
+        if (bus->subscriptions[i].fd == client_fd &&
+            strcmp(bus->subscriptions[i].topic, topic) == 0) {
+            return BC_OK;
+        }
     }
 
     bus->subscriptions[bus->subscription_count].fd = client_fd;
@@ -70,7 +69,9 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
     for (size_t i = 0; i < bus->subscription_count; ++i) {
         bc_subscription_t *sub = &bus->subscriptions[i];
         bc_ipc_header_t header;
+        uint8_t frame[sizeof(bc_ipc_header_t) + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN];
         uint16_t topic_len;
+        size_t frame_len;
 
         if (sub->fd == source_fd) {
             continue;
@@ -87,9 +88,13 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
         header.topic_len = topic_len;
         header.payload_len = (uint32_t)msg->payload_len;
 
-        if (write_all(sub->fd, &header, sizeof(header)) != BC_OK ||
-            write_all(sub->fd, msg->topic, topic_len) != BC_OK ||
-            write_all(sub->fd, msg->payload, msg->payload_len) != BC_OK) {
+        frame_len = sizeof(header) + topic_len + msg->payload_len;
+        memcpy(frame, &header, sizeof(header));
+        memcpy(frame + sizeof(header), msg->topic, topic_len);
+        memcpy(frame + sizeof(header) + topic_len, msg->payload, msg->payload_len);
+
+        if (bus->deliver_fn == NULL ||
+            bus->deliver_fn(bus->deliver_user, sub->fd, frame, frame_len) != BC_OK) {
             continue;
         }
         delivered++;

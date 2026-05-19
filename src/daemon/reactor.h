@@ -11,9 +11,12 @@ typedef enum {
 
 typedef void (*bc_reactor_cb)(int fd, uint32_t events, void *user);
 
+typedef struct bc_reactor_event bc_reactor_event_t;
+
 typedef struct {
     int epoll_fd;
     int stop;
+    bc_reactor_event_t *events;
 } bc_reactor_t;
 
 int bc_reactor_init(bc_reactor_t *reactor);

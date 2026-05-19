@@ -16,6 +16,7 @@ typedef struct {
 } bc_frame_t;
 
 int bc_protocol_encode(const bc_message_t *msg, bc_frame_t *frame);
+int bc_protocol_frame_length(const uint8_t *data, size_t len, size_t *frame_len);
 int bc_protocol_decode(const uint8_t *data, size_t len, bc_message_t *msg);
 
 #endif

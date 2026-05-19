@@ -8,6 +8,7 @@
 #include "transport_manager.h"
 #include "log.h"
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -16,27 +17,69 @@
 typedef struct {
     bc_transport_t *transport;
     bc_message_bus_t *bus;
+    uint8_t rx_buf[BC_MAX_FRAME_LEN * 2];
+    size_t rx_len;
 } bc_transport_event_ctx_t;
+
+static int process_transport_frames(bc_transport_event_ctx_t *ctx)
+{
+    for (;;) {
+        size_t frame_len = 0;
+        bc_message_t msg;
+        int rc = bc_protocol_frame_length(ctx->rx_buf, ctx->rx_len, &frame_len);
+
+        if (rc == BC_ERR_NOT_FOUND) {
+            return BC_OK;
+        }
+        if (rc != BC_OK || frame_len > ctx->rx_len) {
+            return BC_ERR_INVALID;
+        }
+        if (bc_protocol_decode(ctx->rx_buf, frame_len, &msg) != BC_OK) {
+            return BC_ERR_INVALID;
+        }
+
+        (void)bc_message_bus_deliver_local(ctx->bus, -1, &msg);
+        memmove(ctx->rx_buf, ctx->rx_buf + frame_len, ctx->rx_len - frame_len);
+        ctx->rx_len -= frame_len;
+    }
+}
 
 static void on_transport_event(int fd, uint32_t events, void *user)
 {
     bc_transport_event_ctx_t *ctx = user;
-    uint8_t buf[BC_MAX_FRAME_LEN];
-    ssize_t n;
-    bc_message_t msg;
 
     (void)fd;
     if ((events & EPOLLIN) == 0) {
         return;
     }
 
-    n = read(ctx->transport->fd, buf, sizeof(buf));
-    if (n <= 0) {
-        return;
-    }
+    for (;;) {
+        ssize_t n;
 
-    if (bc_protocol_decode(buf, (size_t)n, &msg) == BC_OK) {
-        (void)bc_message_bus_deliver_local(ctx->bus, -1, &msg);
+        if (ctx->rx_len >= sizeof(ctx->rx_buf)) {
+            ctx->rx_len = 0;
+            return;
+        }
+
+        n = read(ctx->transport->fd, ctx->rx_buf + ctx->rx_len, sizeof(ctx->rx_buf) - ctx->rx_len);
+        if (n > 0) {
+            ctx->rx_len += (size_t)n;
+            if (process_transport_frames(ctx) != BC_OK) {
+                ctx->rx_len = 0;
+                return;
+            }
+            continue;
+        }
+        if (n == 0) {
+            return;
+        }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        return;
     }
 }
 

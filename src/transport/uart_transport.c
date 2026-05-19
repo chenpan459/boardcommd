@@ -1,5 +1,6 @@
 #include "transport.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,9 +54,21 @@ static void uart_close(bc_transport_t *transport)
 
 static int uart_send(bc_transport_t *transport, const uint8_t *data, size_t len)
 {
-    ssize_t n = write(transport->fd, data, len);
+    size_t off = 0;
 
-    return n == (ssize_t)len ? BC_OK : BC_ERR_IO;
+    while (off < len) {
+        ssize_t n = write(transport->fd, data + off, len - off);
+
+        if (n > 0) {
+            off += (size_t)n;
+            continue;
+        }
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        return BC_ERR_IO;
+    }
+    return BC_OK;
 }
 
 static const bc_transport_ops_t uart_ops = {

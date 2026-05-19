@@ -3,6 +3,7 @@
 #include "ipc_protocol.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -75,7 +76,12 @@ int boardcomm_init(const char *socket_path)
 
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
+    if (strlen(path) >= sizeof(addr.sun_path)) {
+        close(g_fd);
+        g_fd = -1;
+        return BC_ERR_INVALID;
+    }
+    memcpy(addr.sun_path, path, strlen(path) + 1);
 
     if (connect(g_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(g_fd);
@@ -157,13 +163,28 @@ int boardcomm_subscribe(const char *topic, boardcomm_msg_cb cb, void *user)
 
 int boardcomm_poll(int timeout_ms)
 {
+    struct pollfd pfd;
     bc_ipc_header_t header;
     char topic[BC_MAX_TOPIC_LEN] = {0};
     uint8_t payload[BC_MAX_PAYLOAD_LEN];
+    int rc;
 
-    (void)timeout_ms;
     if (ensure_connected() != BC_OK || g_cb == NULL) {
         return BC_ERR_INVALID;
+    }
+
+    pfd.fd = g_fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    do {
+        rc = poll(&pfd, 1, timeout_ms);
+    } while (rc < 0 && errno == EINTR);
+
+    if (rc == 0) {
+        return BC_ERR_NOT_FOUND;
+    }
+    if (rc < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        return BC_ERR_IO;
     }
 
     if (read_all(g_fd, &header, sizeof(header)) != BC_OK ||

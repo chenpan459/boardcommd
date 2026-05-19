@@ -54,3 +54,34 @@ examples/     # 示例 / 测试程序
 LD_LIBRARY_PATH=build ./build/boardcomm_sub demo.topic
 LD_LIBRARY_PATH=build ./build/boardcomm_pub demo.topic "hello"
 ```
+
+## Test Examples
+
+性能吞吐量 / 传输速率测试：
+
+```sh
+LD_LIBRARY_PATH=build ./build/boardcomm_perf_sub perf.topic 10
+LD_LIBRARY_PATH=build ./build/boardcomm_perf_pub perf.topic 10 1024
+```
+
+参数含义：
+
+```text
+boardcomm_perf_sub [topic] [duration_sec]
+boardcomm_perf_pub [topic] [duration_sec] [payload_size]
+```
+
+稳定性发送测试：
+
+```sh
+LD_LIBRARY_PATH=build ./build/boardcomm_perf_sub stable.topic
+LD_LIBRARY_PATH=build ./build/boardcomm_stability_pub stable.topic 3600 256 10000
+```
+
+参数含义：
+
+```text
+boardcomm_stability_pub [topic] [duration_sec] [payload_size] [interval_us]
+```
+
+日志输出到控制台，同时写入 `log/*.log`。
