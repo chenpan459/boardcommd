@@ -20,7 +20,7 @@ static int write_all(int fd, const void *data, size_t len)
     size_t off = 0;
 
     while (off < len) {
-        ssize_t n = write(fd, p + off, len - off);
+        ssize_t n = send(fd, p + off, len - off, MSG_NOSIGNAL);
 
         if (n < 0 && errno == EINTR) {
             continue;
@@ -198,7 +198,7 @@ ssize_t bc_read(
     } while (rc < 0 && errno == EINTR);
 
     if (rc == 0) {
-        return BC_ERR_NOT_FOUND;
+        return BC_ERR_TIMEOUT;
     }
     if (rc < 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
         return BC_ERR_IO;

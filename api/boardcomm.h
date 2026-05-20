@@ -50,6 +50,25 @@ int bc_subscribe(
 
 int bc_poll(int timeout_ms);
 
+int bc_file_send(int handle, const char *topic, const char *path);
+int bc_file_send_channel(
+    int handle,
+    const char *channel,
+    const char *topic,
+    const char *path);
+
+int bc_file_recv(
+    int handle,
+    const char *topic,
+    const char *path,
+    int timeout_ms);
+int bc_file_recv_channel(
+    int handle,
+    const char *channel,
+    const char *topic,
+    const char *path,
+    int timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

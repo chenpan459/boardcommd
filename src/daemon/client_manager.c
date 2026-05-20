@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #define BC_CLIENT_RX_CAP (sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
-#define BC_CLIENT_TX_CAP (256u * 1024u)
+#define BC_CLIENT_TX_CAP (1024u * 1024u)
 
 struct bc_client_ctx {
     int fd;
@@ -26,6 +26,7 @@ struct bc_client_ctx {
 };
 
 static void on_client_event(int fd, uint32_t events, void *user);
+static int process_messages(bc_client_ctx_t *client);
 
 static void link_client(bc_client_manager_t *manager, bc_client_ctx_t *client)
 {
@@ -128,6 +129,24 @@ static int enqueue_client_tx(bc_client_ctx_t *client, const void *data, size_t l
     return update_client_events(client);
 }
 
+static void resume_pending_publishers(bc_client_manager_t *manager)
+{
+    for (bc_client_ctx_t *client = manager->clients; client != NULL; client = client->next) {
+        int rc;
+
+        if (client->rx_len == 0) {
+            continue;
+        }
+        rc = process_messages(client);
+        if (rc == BC_ERR_NOMEM) {
+            continue;
+        }
+        if (rc != BC_OK) {
+            close_client(client);
+        }
+    }
+}
+
 static int deliver_to_client(void *user, int client_fd, const void *data, size_t len)
 {
     bc_client_manager_t *manager = user;
@@ -148,6 +167,7 @@ static int process_one_message(bc_client_ctx_t *client)
     bc_message_t msg;
     size_t frame_len;
     const uint8_t *frame;
+    int rc;
 
     if (client->rx_len < sizeof(header)) {
         return BC_ERR_NOT_FOUND;
@@ -185,7 +205,10 @@ static int process_one_message(bc_client_ctx_t *client)
         snprintf(msg.topic, sizeof(msg.topic), "%s", topic);
         msg.payload_len = header.payload_len;
         memcpy(msg.payload, frame + header.channel_len + header.topic_len, msg.payload_len);
-        (void)bc_message_bus_publish(manager->bus, client->fd, &msg);
+        rc = bc_message_bus_publish(manager->bus, client->fd, &msg);
+        if (rc != BC_OK) {
+            return rc;
+        }
     } else {
         return BC_ERR_INVALID;
     }
@@ -203,6 +226,9 @@ static int process_messages(bc_client_ctx_t *client)
         if (rc == BC_ERR_NOT_FOUND) {
             return BC_OK;
         }
+        if (rc == BC_ERR_NOMEM) {
+            return BC_ERR_NOMEM;
+        }
         if (rc != BC_OK) {
             return rc;
         }
@@ -213,9 +239,12 @@ static void on_client_event(int fd, uint32_t events, void *user)
 {
     bc_client_ctx_t *client = user;
 
-    if ((events & EPOLLOUT) != 0 && flush_client_tx(client) != BC_OK) {
-        close_client(client);
-        return;
+    if ((events & EPOLLOUT) != 0) {
+        if (flush_client_tx(client) != BC_OK) {
+            close_client(client);
+            return;
+        }
+        resume_pending_publishers(client->manager);
     }
 
     if ((events & (EPOLLHUP | EPOLLERR)) != 0 && (events & EPOLLIN) == 0) {
@@ -233,8 +262,14 @@ static void on_client_event(int fd, uint32_t events, void *user)
 
         n = read(fd, client->rx_buf + client->rx_len, sizeof(client->rx_buf) - client->rx_len);
         if (n > 0) {
+            int rc;
+
             client->rx_len += (size_t)n;
-            if (process_messages(client) != BC_OK) {
+            rc = process_messages(client);
+            if (rc == BC_ERR_NOMEM) {
+                return;
+            }
+            if (rc != BC_OK) {
                 close_client(client);
                 return;
             }

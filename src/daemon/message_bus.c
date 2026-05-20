@@ -65,6 +65,8 @@ void bc_message_bus_remove_client(bc_message_bus_t *bus, int client_fd)
 int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_message_t *msg)
 {
     int delivered = 0;
+    int matched = 0;
+    int failed = 0;
 
     for (size_t i = 0; i < bus->subscription_count; ++i) {
         bc_subscription_t *sub = &bus->subscriptions[i];
@@ -80,6 +82,7 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
         if (strcmp(sub->topic, msg->topic) != 0 && strcmp(sub->topic, "*") != 0) {
             continue;
         }
+        matched++;
 
         channel_len = (uint16_t)strnlen(msg->channel, BC_MAX_CHANNEL_LEN);
         topic_len = (uint16_t)strnlen(msg->topic, BC_MAX_TOPIC_LEN);
@@ -99,9 +102,17 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
 
         if (bus->deliver_fn == NULL ||
             bus->deliver_fn(bus->deliver_user, sub->fd, frame, frame_len) != BC_OK) {
+            failed++;
             continue;
         }
         delivered++;
+    }
+
+    if (failed > 0) {
+        return BC_ERR_NOMEM;
+    }
+    if (matched > 0 && delivered == 0) {
+        return BC_ERR_NOMEM;
     }
 
     return delivered;
@@ -116,7 +127,11 @@ int bc_message_bus_publish(bc_message_bus_t *bus, int source_fd, const bc_messag
         return BC_ERR_INVALID;
     }
 
-    (void)bc_message_bus_deliver_local(bus, source_fd, msg);
+    int local_rc = bc_message_bus_deliver_local(bus, source_fd, msg);
+
+    if (local_rc == BC_ERR_NOMEM) {
+        return BC_ERR_NOMEM;
+    }
 
     if (bc_router_route(bus->router, msg, &route) != BC_OK) {
         return BC_OK;

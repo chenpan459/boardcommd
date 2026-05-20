@@ -36,6 +36,7 @@ add_library(boardcomm_log STATIC
 
 add_library(boardcomm SHARED
     api/boardcomm_client.c
+    api/boardcomm_file.c
 )
 
 target_include_directories(boardcomm PUBLIC api)
@@ -70,3 +71,9 @@ target_link_libraries(boardcomm_perf_sub boardcomm boardcomm_log)
 
 add_executable(boardcomm_stability_pub examples/stability_pub.c)
 target_link_libraries(boardcomm_stability_pub boardcomm boardcomm_log)
+
+add_executable(boardcomm_file_send examples/file_send.c)
+target_link_libraries(boardcomm_file_send boardcomm boardcomm_log)
+
+add_executable(boardcomm_file_recv examples/file_recv.c)
+target_link_libraries(boardcomm_file_recv boardcomm boardcomm_log)
