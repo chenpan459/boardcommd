@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define BC_MAX_CHANNEL_LEN 32
 #define BC_MAX_TOPIC_LEN 64
 #define BC_MAX_PAYLOAD_LEN 1400
 #define BC_DEFAULT_SOCKET_PATH "/tmp/boardcommd.sock"
@@ -23,12 +24,13 @@ typedef struct {
     uint16_t flags;
     uint16_t qos;
     uint32_t seq;
+    char channel[BC_MAX_CHANNEL_LEN];
     char topic[BC_MAX_TOPIC_LEN];
     size_t payload_len;
     uint8_t payload[BC_MAX_PAYLOAD_LEN];
 } bc_message_t;
 
-typedef void (*boardcomm_msg_cb)(
+typedef void (*bc_msg_cb)(
     const char *topic,
     const void *payload,
     size_t len,

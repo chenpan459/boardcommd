@@ -69,7 +69,8 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
     for (size_t i = 0; i < bus->subscription_count; ++i) {
         bc_subscription_t *sub = &bus->subscriptions[i];
         bc_ipc_header_t header;
-        uint8_t frame[sizeof(bc_ipc_header_t) + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN];
+        uint8_t frame[sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN];
+        uint16_t channel_len;
         uint16_t topic_len;
         size_t frame_len;
 
@@ -80,18 +81,21 @@ int bc_message_bus_deliver_local(bc_message_bus_t *bus, int source_fd, const bc_
             continue;
         }
 
+        channel_len = (uint16_t)strnlen(msg->channel, BC_MAX_CHANNEL_LEN);
         topic_len = (uint16_t)strnlen(msg->topic, BC_MAX_TOPIC_LEN);
         memset(&header, 0, sizeof(header));
         header.magic = BC_IPC_MAGIC;
         header.version = 1;
         header.type = BC_IPC_DELIVER;
+        header.channel_len = channel_len;
         header.topic_len = topic_len;
         header.payload_len = (uint32_t)msg->payload_len;
 
-        frame_len = sizeof(header) + topic_len + msg->payload_len;
+        frame_len = sizeof(header) + channel_len + topic_len + msg->payload_len;
         memcpy(frame, &header, sizeof(header));
-        memcpy(frame + sizeof(header), msg->topic, topic_len);
-        memcpy(frame + sizeof(header) + topic_len, msg->payload, msg->payload_len);
+        memcpy(frame + sizeof(header), msg->channel, channel_len);
+        memcpy(frame + sizeof(header) + channel_len, msg->topic, topic_len);
+        memcpy(frame + sizeof(header) + channel_len + topic_len, msg->payload, msg->payload_len);
 
         if (bus->deliver_fn == NULL ||
             bus->deliver_fn(bus->deliver_user, sub->fd, frame, frame_len) != BC_OK) {

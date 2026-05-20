@@ -32,6 +32,7 @@ int main(int argc, char **argv)
     double last_report;
     uint64_t sent = 0;
     uint64_t failed = 0;
+    int handle;
 
     (void)bc_log_init("log", "boardcomm_stability_pub");
 
@@ -50,7 +51,8 @@ int main(int argc, char **argv)
     }
     memset(payload, 0xa5, payload_size);
 
-    if (boardcomm_init(NULL) != BC_OK) {
+    handle = bc_open(NULL);
+    if (handle < 0) {
         BC_LOGE("stability_pub", "failed to connect to boardcommd");
         free(payload);
         bc_log_close();
@@ -71,7 +73,7 @@ int main(int argc, char **argv)
         double now;
 
         memcpy(payload, &sent, sizeof(sent));
-        if (boardcomm_publish(topic, payload, payload_size) == BC_OK) {
+        if (bc_write(handle, topic, payload, payload_size) >= 0) {
             sent++;
         } else {
             failed++;
@@ -112,7 +114,7 @@ int main(int argc, char **argv)
             sent + failed > 0 ? (double)failed / (double)(sent + failed) : 0.0);
     }
 
-    boardcomm_shutdown();
+    (void)bc_close(handle);
     free(payload);
     bc_log_close();
     return failed == 0 ? 0 : 1;

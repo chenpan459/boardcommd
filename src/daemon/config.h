@@ -7,6 +7,7 @@
 
 #define BC_MAX_TRANSPORTS 8
 #define BC_MAX_ROUTES 32
+#define BC_MAX_CHANNELS 32
 
 typedef enum {
     BC_TRANSPORT_UDP,
@@ -28,10 +29,17 @@ typedef struct {
 } bc_route_config_t;
 
 typedef struct {
+    char name[BC_MAX_CHANNEL_LEN];
+    char transport[32];
+} bc_channel_config_t;
+
+typedef struct {
     unsigned int node_id;
     char socket_path[128];
     bc_transport_config_t transports[BC_MAX_TRANSPORTS];
     size_t transport_count;
+    bc_channel_config_t channels[BC_MAX_CHANNELS];
+    size_t channel_count;
     bc_route_config_t routes[BC_MAX_ROUTES];
     size_t route_count;
 } bc_config_t;

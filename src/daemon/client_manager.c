@@ -11,7 +11,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#define BC_CLIENT_RX_CAP (sizeof(bc_ipc_header_t) + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
+#define BC_CLIENT_RX_CAP (sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
 #define BC_CLIENT_TX_CAP (256u * 1024u)
 
 struct bc_client_ctx {
@@ -143,6 +143,7 @@ static int process_one_message(bc_client_ctx_t *client)
 {
     bc_client_manager_t *manager = client->manager;
     bc_ipc_header_t header;
+    char channel[BC_MAX_CHANNEL_LEN] = {0};
     char topic[BC_MAX_TOPIC_LEN] = {0};
     bc_message_t msg;
     size_t frame_len;
@@ -155,13 +156,14 @@ static int process_one_message(bc_client_ctx_t *client)
     memcpy(&header, client->rx_buf, sizeof(header));
     if (
         header.magic != BC_IPC_MAGIC ||
+        header.channel_len >= BC_MAX_CHANNEL_LEN ||
         header.topic_len == 0 ||
         header.topic_len >= BC_MAX_TOPIC_LEN ||
         header.payload_len > BC_MAX_PAYLOAD_LEN) {
         return BC_ERR_INVALID;
     }
 
-    frame_len = sizeof(header) + header.topic_len + header.payload_len;
+    frame_len = sizeof(header) + header.channel_len + header.topic_len + header.payload_len;
     if (frame_len > sizeof(client->rx_buf)) {
         return BC_ERR_INVALID;
     }
@@ -170,16 +172,19 @@ static int process_one_message(bc_client_ctx_t *client)
     }
 
     frame = client->rx_buf + sizeof(header);
-    memcpy(topic, frame, header.topic_len);
+    memcpy(channel, frame, header.channel_len);
+    channel[header.channel_len] = '\0';
+    memcpy(topic, frame + header.channel_len, header.topic_len);
     topic[header.topic_len] = '\0';
 
     if (header.type == BC_IPC_SUBSCRIBE) {
         (void)bc_message_bus_subscribe(manager->bus, client->fd, topic);
     } else if (header.type == BC_IPC_PUBLISH) {
         memset(&msg, 0, sizeof(msg));
+        snprintf(msg.channel, sizeof(msg.channel), "%s", channel);
         snprintf(msg.topic, sizeof(msg.topic), "%s", topic);
         msg.payload_len = header.payload_len;
-        memcpy(msg.payload, frame + header.topic_len, msg.payload_len);
+        memcpy(msg.payload, frame + header.channel_len + header.topic_len, msg.payload_len);
         (void)bc_message_bus_publish(manager->bus, client->fd, &msg);
     } else {
         return BC_ERR_INVALID;

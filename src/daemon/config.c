@@ -30,6 +30,10 @@ void bc_config_load_defaults(bc_config_t *cfg)
     bc_route_config_t *route = &cfg->routes[cfg->route_count++];
     snprintf(route->topic, sizeof(route->topic), "*");
     snprintf(route->transport, sizeof(route->transport), "udp0");
+
+    bc_channel_config_t *channel = &cfg->channels[cfg->channel_count++];
+    snprintf(channel->name, sizeof(channel->name), "default");
+    snprintf(channel->transport, sizeof(channel->transport), "udp0");
 }
 
 int bc_config_load(const char *path, bc_config_t *cfg)
@@ -46,6 +50,10 @@ int bc_config_load(const char *path, bc_config_t *cfg)
     if (fp == NULL) {
         return BC_OK;
     }
+
+    cfg->transport_count = 0;
+    cfg->channel_count = 0;
+    cfg->route_count = 0;
 
     while (fgets(line, sizeof(line), fp) != NULL) {
         char kind[32] = {0};
@@ -77,6 +85,17 @@ int bc_config_load(const char *path, bc_config_t *cfg)
                 snprintf(transport->endpoint, sizeof(transport->endpoint), "%s", endpoint);
                 transport->local_port = local_port;
                 transport->baudrate = baudrate;
+            }
+            continue;
+        }
+        if (strcmp(kind, "channel") == 0 && cfg->channel_count < BC_MAX_CHANNELS) {
+            char name[BC_MAX_CHANNEL_LEN] = {0};
+            char transport[32] = {0};
+
+            if (sscanf(line, "channel %31s %31s", name, transport) == 2) {
+                bc_channel_config_t *channel = &cfg->channels[cfg->channel_count++];
+                snprintf(channel->name, sizeof(channel->name), "%s", name);
+                snprintf(channel->transport, sizeof(channel->transport), "%s", transport);
             }
             continue;
         }

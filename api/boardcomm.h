@@ -3,24 +3,52 @@
 
 #include "boardcomm_types.h"
 
+#include <sys/types.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int boardcomm_init(const char *socket_path);
-void boardcomm_shutdown(void);
+int bc_open(const char *socket_path);
+int bc_close(int handle);
 
-int boardcomm_publish(
+ssize_t bc_write(
+    int handle,
     const char *topic,
     const void *payload,
     size_t len);
 
-int boardcomm_subscribe(
+ssize_t bc_write_channel(
+    int handle,
+    const char *channel,
     const char *topic,
-    boardcomm_msg_cb cb,
+    const void *payload,
+    size_t len);
+
+ssize_t bc_read(
+    int handle,
+    char *topic,
+    size_t topic_cap,
+    void *payload,
+    size_t payload_cap,
+    int timeout_ms);
+
+int bc_subscribe_fd(int handle, const char *topic);
+
+int bc_init(const char *socket_path);
+void bc_shutdown(void);
+
+int bc_publish(
+    const char *topic,
+    const void *payload,
+    size_t len);
+
+int bc_subscribe(
+    const char *topic,
+    bc_msg_cb cb,
     void *user);
 
-int boardcomm_poll(int timeout_ms);
+int bc_poll(int timeout_ms);
 
 #ifdef __cplusplus
 }

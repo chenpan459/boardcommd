@@ -11,8 +11,8 @@ typedef struct {
     uint16_t flags;
     uint16_t qos;
     uint32_t seq;
+    uint16_t channel_len;
     uint16_t topic_len;
-    uint16_t reserved;
     uint32_t payload_len;
     uint32_t checksum;
 } bc_frame_header_t;
@@ -35,6 +35,7 @@ static uint32_t bc_crc32(const uint8_t *data, size_t len)
 int bc_protocol_encode(const bc_message_t *msg, bc_frame_t *frame)
 {
     bc_frame_header_t header;
+    size_t channel_len;
     size_t topic_len;
     size_t total_len;
 
@@ -42,12 +43,16 @@ int bc_protocol_encode(const bc_message_t *msg, bc_frame_t *frame)
         return BC_ERR_INVALID;
     }
 
+    channel_len = strnlen(msg->channel, BC_MAX_CHANNEL_LEN);
     topic_len = strnlen(msg->topic, BC_MAX_TOPIC_LEN);
+    if (channel_len >= BC_MAX_CHANNEL_LEN) {
+        return BC_ERR_INVALID;
+    }
     if (topic_len == 0 || topic_len >= BC_MAX_TOPIC_LEN || msg->payload_len > BC_MAX_PAYLOAD_LEN) {
         return BC_ERR_INVALID;
     }
 
-    total_len = sizeof(header) + topic_len + msg->payload_len;
+    total_len = sizeof(header) + channel_len + topic_len + msg->payload_len;
     if (total_len > sizeof(frame->data)) {
         return BC_ERR_INVALID;
     }
@@ -61,13 +66,15 @@ int bc_protocol_encode(const bc_message_t *msg, bc_frame_t *frame)
     header.flags = msg->flags;
     header.qos = msg->qos;
     header.seq = msg->seq;
+    header.channel_len = (uint16_t)channel_len;
     header.topic_len = (uint16_t)topic_len;
     header.payload_len = (uint32_t)msg->payload_len;
     header.checksum = bc_crc32(msg->payload, msg->payload_len);
 
     memcpy(frame->data, &header, sizeof(header));
-    memcpy(frame->data + sizeof(header), msg->topic, topic_len);
-    memcpy(frame->data + sizeof(header) + topic_len, msg->payload, msg->payload_len);
+    memcpy(frame->data + sizeof(header), msg->channel, channel_len);
+    memcpy(frame->data + sizeof(header) + channel_len, msg->topic, topic_len);
+    memcpy(frame->data + sizeof(header) + channel_len + topic_len, msg->payload, msg->payload_len);
     frame->len = total_len;
 
     return BC_OK;
@@ -92,6 +99,9 @@ int bc_protocol_frame_length(const uint8_t *data, size_t len, size_t *frame_len)
     if (header.header_len != sizeof(header)) {
         return BC_ERR_INVALID;
     }
+    if (header.channel_len >= BC_MAX_CHANNEL_LEN) {
+        return BC_ERR_INVALID;
+    }
     if (header.topic_len == 0 || header.topic_len >= BC_MAX_TOPIC_LEN) {
         return BC_ERR_INVALID;
     }
@@ -99,7 +109,7 @@ int bc_protocol_frame_length(const uint8_t *data, size_t len, size_t *frame_len)
         return BC_ERR_INVALID;
     }
 
-    total_len = sizeof(header) + header.topic_len + header.payload_len;
+    total_len = sizeof(header) + header.channel_len + header.topic_len + header.payload_len;
     if (total_len > BC_MAX_FRAME_LEN) {
         return BC_ERR_INVALID;
     }
@@ -121,6 +131,9 @@ int bc_protocol_decode(const uint8_t *data, size_t len, bc_message_t *msg)
     if (header.magic != BC_FRAME_MAGIC || header.version != BC_FRAME_VERSION) {
         return BC_ERR_INVALID;
     }
+    if (header.channel_len >= BC_MAX_CHANNEL_LEN) {
+        return BC_ERR_INVALID;
+    }
     if (header.topic_len == 0 || header.topic_len >= BC_MAX_TOPIC_LEN) {
         return BC_ERR_INVALID;
     }
@@ -130,11 +143,11 @@ int bc_protocol_decode(const uint8_t *data, size_t len, bc_message_t *msg)
     if (header.header_len != sizeof(header)) {
         return BC_ERR_INVALID;
     }
-    if (len < sizeof(header) + header.topic_len + header.payload_len) {
+    if (len < sizeof(header) + header.channel_len + header.topic_len + header.payload_len) {
         return BC_ERR_INVALID;
     }
 
-    payload = data + sizeof(header) + header.topic_len;
+    payload = data + sizeof(header) + header.channel_len + header.topic_len;
     if (bc_crc32(payload, header.payload_len) != header.checksum) {
         return BC_ERR_INVALID;
     }
@@ -145,7 +158,9 @@ int bc_protocol_decode(const uint8_t *data, size_t len, bc_message_t *msg)
     msg->flags = header.flags;
     msg->qos = header.qos;
     msg->seq = header.seq;
-    memcpy(msg->topic, data + sizeof(header), header.topic_len);
+    memcpy(msg->channel, data + sizeof(header), header.channel_len);
+    msg->channel[header.channel_len] = '\0';
+    memcpy(msg->topic, data + sizeof(header) + header.channel_len, header.topic_len);
     msg->topic[header.topic_len] = '\0';
     msg->payload_len = header.payload_len;
     memcpy(msg->payload, payload, header.payload_len);

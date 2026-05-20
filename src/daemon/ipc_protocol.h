@@ -18,7 +18,7 @@ typedef struct {
     uint16_t version;
     uint16_t type;
     uint16_t topic_len;
-    uint16_t reserved;
+    uint16_t channel_len;
     uint32_t payload_len;
 } bc_ipc_header_t;
 

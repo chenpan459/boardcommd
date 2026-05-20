@@ -7,24 +7,34 @@ int main(int argc, char **argv)
 {
     const char *topic = argc > 1 ? argv[1] : "demo.topic";
     const char *payload = argc > 2 ? argv[2] : "hello from boardcomm_pub";
+    const char *channel = argc > 3 ? argv[3] : NULL;
+    int handle;
 
     (void)bc_log_init("log", "boardcomm_pub");
 
-    if (boardcomm_init(NULL) != BC_OK) {
+    handle = bc_open(NULL);
+    if (handle < 0) {
         BC_LOGE("pub", "failed to connect to boardcommd");
         bc_log_close();
         return 1;
     }
 
-    if (boardcomm_publish(topic, payload, strlen(payload)) != BC_OK) {
+    if ((channel != NULL
+             ? bc_write_channel(handle, channel, topic, payload, strlen(payload))
+             : bc_write(handle, topic, payload, strlen(payload))) < 0) {
         BC_LOGE("pub", "failed to publish message");
-        boardcomm_shutdown();
+        (void)bc_close(handle);
         bc_log_close();
         return 1;
     }
 
-    BC_LOGI("pub", "published topic=%s payload=%s", topic, payload);
-    boardcomm_shutdown();
+    BC_LOGI(
+        "pub",
+        "published channel=%s topic=%s payload=%s",
+        channel != NULL ? channel : "-",
+        topic,
+        payload);
+    (void)bc_close(handle);
     bc_log_close();
     return 0;
 }

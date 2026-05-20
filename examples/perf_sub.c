@@ -74,9 +74,8 @@ static void report_summary(perf_state_t *state)
         ((double)state->bytes * 8.0) / elapsed / 1000000.0);
 }
 
-static void on_message(const char *topic, const void *payload, size_t len, void *user)
+static void on_message(const char *topic, const void *payload, size_t len, perf_state_t *state)
 {
-    perf_state_t *state = user;
     double now = now_sec();
 
     (void)topic;
@@ -109,6 +108,7 @@ int main(int argc, char **argv)
 {
     const char *topic = argc > 1 ? argv[1] : "perf.topic";
     perf_state_t state;
+    int handle;
 
     memset(&state, 0, sizeof(state));
     state.duration_sec = argc > 2 ? (unsigned int)strtoul(argv[2], NULL, 10) : 10;
@@ -124,15 +124,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (boardcomm_init(NULL) != BC_OK) {
+    handle = bc_open(NULL);
+    if (handle < 0) {
         BC_LOGE("perf_sub", "failed to connect to boardcommd");
         bc_log_close();
         return 1;
     }
 
-    if (boardcomm_subscribe(topic, on_message, &state) != BC_OK) {
+    if (bc_subscribe_fd(handle, topic) != BC_OK) {
         BC_LOGE("perf_sub", "failed to subscribe topic=%s", topic);
-        boardcomm_shutdown();
+        (void)bc_close(handle);
         bc_log_close();
         return 1;
     }
@@ -144,9 +145,17 @@ int main(int argc, char **argv)
         state.duration_sec);
 
     while (now_sec() - state.start < (double)state.duration_sec) {
-        int rc = boardcomm_poll(100);
+        char recv_topic[BC_MAX_TOPIC_LEN];
+        uint8_t payload[BC_MAX_PAYLOAD_LEN];
+        ssize_t n = bc_read(
+            handle,
+            recv_topic,
+            sizeof(recv_topic),
+            payload,
+            sizeof(payload),
+            100);
 
-        if (rc == BC_ERR_NOT_FOUND) {
+        if (n == BC_ERR_NOT_FOUND) {
             double now = now_sec();
 
             if (now - state.last_report >= 1.0) {
@@ -154,16 +163,17 @@ int main(int argc, char **argv)
             }
             continue;
         }
-        if (rc != BC_OK) {
-            BC_LOGE("perf_sub", "poll failed");
-            boardcomm_shutdown();
+        if (n < 0) {
+            BC_LOGE("perf_sub", "read failed");
+            (void)bc_close(handle);
             bc_log_close();
             return 1;
         }
+        on_message(recv_topic, payload, (size_t)n, &state);
     }
 
     report_summary(&state);
-    boardcomm_shutdown();
+    (void)bc_close(handle);
     bc_log_close();
     return 0;
 }
