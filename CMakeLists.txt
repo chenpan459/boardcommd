@@ -26,21 +26,20 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/api
     ${BOARDCOMM_SRC_DIR}/daemon
     ${BOARDCOMM_SRC_DIR}/transport
-    ${BOARDCOMM_SRC_DIR}/log
     ${CMAKE_CURRENT_BINARY_DIR}/generated
 )
 
 add_library(boardcomm_log STATIC
     src/log/log.c
 )
+target_include_directories(boardcomm_log PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api)
 
-add_library(boardcomm SHARED
-    api/boardcomm_client.c
-    api/boardcomm_file.c
+add_library(bc_api SHARED
+    api/bc_client.c
+    api/bc_file.c
 )
 
-target_include_directories(boardcomm PUBLIC api)
-target_link_libraries(boardcomm PRIVATE boardcomm_log)
+target_include_directories(bc_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api)
 
 add_executable(boardcommd
     src/daemon/main.c
@@ -58,22 +57,22 @@ add_executable(boardcommd
 target_link_libraries(boardcommd PRIVATE boardcomm_log)
 
 add_executable(boardcomm_pub examples/pub.c)
-target_link_libraries(boardcomm_pub boardcomm boardcomm_log)
+target_link_libraries(boardcomm_pub bc_api boardcomm_log)
 
 add_executable(boardcomm_sub examples/sub.c)
-target_link_libraries(boardcomm_sub boardcomm boardcomm_log)
+target_link_libraries(boardcomm_sub bc_api boardcomm_log)
 
 add_executable(boardcomm_perf_pub examples/perf_pub.c)
-target_link_libraries(boardcomm_perf_pub boardcomm boardcomm_log)
+target_link_libraries(boardcomm_perf_pub bc_api boardcomm_log)
 
 add_executable(boardcomm_perf_sub examples/perf_sub.c)
-target_link_libraries(boardcomm_perf_sub boardcomm boardcomm_log)
+target_link_libraries(boardcomm_perf_sub bc_api boardcomm_log)
 
 add_executable(boardcomm_stability_pub examples/stability_pub.c)
-target_link_libraries(boardcomm_stability_pub boardcomm boardcomm_log)
+target_link_libraries(boardcomm_stability_pub bc_api boardcomm_log)
 
 add_executable(boardcomm_file_send examples/file_send.c)
-target_link_libraries(boardcomm_file_send boardcomm boardcomm_log)
+target_link_libraries(boardcomm_file_send bc_api boardcomm_log)
 
 add_executable(boardcomm_file_recv examples/file_recv.c)
-target_link_libraries(boardcomm_file_recv boardcomm boardcomm_log)
+target_link_libraries(boardcomm_file_recv bc_api boardcomm_log)

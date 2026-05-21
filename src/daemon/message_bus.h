@@ -1,7 +1,7 @@
 #ifndef BC_MESSAGE_BUS_H
 #define BC_MESSAGE_BUS_H
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 #include "router.h"
 
 #define BC_MAX_CLIENTS 64

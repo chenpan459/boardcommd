@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 
 #define BC_MAX_TRANSPORTS 8
 #define BC_MAX_ROUTES 32

@@ -1,4 +1,4 @@
-#include "log.h"
+#include "bc_log.h"
 
 #include <errno.h>
 #include <stdarg.h>

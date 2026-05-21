@@ -1,4 +1,4 @@
-#include "boardcomm.h"
+#include "bc.h"
 
 #include "ipc_protocol.h"
 

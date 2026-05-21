@@ -1,7 +1,7 @@
-#ifndef BOARDCOMM_H
-#define BOARDCOMM_H
+#ifndef BC_H
+#define BC_H
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 
 #include <sys/types.h>
 

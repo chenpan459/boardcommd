@@ -15,7 +15,7 @@ Applications
 
 当前 MVP 使用 C 语言实现：
 
-- `libboardcomm.so`：应用侧 SDK
+- `libbc_api.so`：应用侧 SDK
 - `bc_open/read/write/close`：应用侧标准读写接口
 - `boardcommd`：独立通信守护进程
 - `MessageBus`：publish / subscribe
@@ -29,10 +29,52 @@ Applications
 src/
   daemon/     # boardcommd 服务进程
   transport/  # TCP / UDP / UART 插件
-  log/        # 统一日志模块
+  log/        # 日志实现（头文件在 api/）
 
-api/          # 应用侧 SDK 源码和对外头文件
+api/          # 应用侧 SDK 对外头文件与库源码
 examples/     # 示例 / 测试程序
+```
+
+## 第三方应用集成
+
+`api/` 目录即为对外 SDK，编译应用时只需包含该目录下的头文件：
+
+```text
+api/bc.h              # 核心 API（必需）
+api/bc_types.h        # 公共类型（由 bc.h 引入）
+api/bc_log.h          # 可选日志辅助（示例程序使用）
+```
+
+链接：
+
+```text
+-lbc_api                 # 核心库（bc_open / bc_write / bc_read 等）
+-lboardcomm_log          # 可选，仅在使用 bc_log_* / BC_LOGI 时需要
+```
+
+最小示例（不依赖日志库）：
+
+```c
+#include "bc.h"
+
+int main(void) {
+    int h = bc_open(NULL);
+    bc_write(h, "demo.topic", "hello", 5);
+    bc_close(h);
+    return 0;
+}
+```
+
+编译示例：
+
+```sh
+gcc -I/path/to/boardcommd/api app.c -L/path/to/build -lbc_api
+```
+
+若使用 `bc_log.h`：
+
+```sh
+gcc -I/path/to/boardcommd/api app.c -L/path/to/build -lbc_api -lboardcomm_log
 ```
 
 ## Build

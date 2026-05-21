@@ -1,5 +1,5 @@
-#ifndef BOARDCOMM_TYPES_H
-#define BOARDCOMM_TYPES_H
+#ifndef BC_TYPES_H
+#define BC_TYPES_H
 
 #include <stddef.h>
 #include <stdint.h>

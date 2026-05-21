@@ -1,5 +1,5 @@
-#include "boardcomm.h"
-#include "log.h"
+#include "bc.h"
+#include "bc_log.h"
 
 #include <stdio.h>
 

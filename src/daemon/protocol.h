@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 
 #define BC_FRAME_MAGIC 0x42434652u
 #define BC_FRAME_VERSION 1u

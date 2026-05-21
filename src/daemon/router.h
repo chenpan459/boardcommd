@@ -1,7 +1,7 @@
 #ifndef BC_ROUTER_H
 #define BC_ROUTER_H
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 #include "config.h"
 #include "transport.h"
 

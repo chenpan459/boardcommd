@@ -1,4 +1,4 @@
-#include "boardcomm.h"
+#include "bc.h"
 
 #include <errno.h>
 #include <fcntl.h>

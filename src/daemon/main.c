@@ -6,7 +6,7 @@
 #include "reactor.h"
 #include "router.h"
 #include "transport_manager.h"
-#include "log.h"
+#include "bc_log.h"
 
 #include <errno.h>
 #include <stdlib.h>

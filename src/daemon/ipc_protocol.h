@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 
 #define BC_IPC_MAGIC 0x42434950u
 

@@ -1,6 +1,6 @@
 #include "reactor.h"
 
-#include "boardcomm_types.h"
+#include "bc_types.h"
 
 #include <stdlib.h>
 #include <sys/epoll.h>
