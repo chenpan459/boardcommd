@@ -17,6 +17,7 @@ Applications
 
 - `libbc_api.so`：应用侧 SDK
 - `bc_open/read/write/close`：应用侧标准读写接口
+- `libbc_transport.so`：传输层插件（UDP / TCP / UART）
 - `boardcommd`：独立通信守护进程
 - `MessageBus`：publish / subscribe
 - `Router`：topic -> transport
@@ -28,7 +29,7 @@ Applications
 ```text
 src/
   daemon/     # boardcommd 服务进程
-  transport/  # TCP / UDP / UART 插件
+  transport/  # UDP / TCP / UART 插件（libbc_transport.so）
   log/        # 日志实现（头文件在 api/）
 
 api/          # 应用侧 SDK 对外头文件与库源码
