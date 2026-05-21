@@ -1,5 +1,7 @@
 #include "router.h"
 
+#include "topic_match.h"
+
 #include <string.h>
 
 void bc_router_init(
@@ -25,18 +27,7 @@ static bc_transport_t *find_transport(bc_router_t *router, const char *name)
 
 static int topic_matches(const char *pattern, const char *topic)
 {
-    size_t len;
-
-    if (strcmp(pattern, "*") == 0) {
-        return 1;
-    }
-
-    len = strlen(pattern);
-    if (len > 0 && pattern[len - 1] == '*') {
-        return strncmp(pattern, topic, len - 1) == 0;
-    }
-
-    return strcmp(pattern, topic) == 0;
+    return bc_topic_matches(pattern, topic);
 }
 
 int bc_router_route(

@@ -37,9 +37,13 @@ target_include_directories(boardcomm_log PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api)
 add_library(bc_api SHARED
     api/bc_client.c
     api/bc_file.c
+    src/shm/bc_shm.c
 )
 
-target_include_directories(bc_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api)
+target_include_directories(bc_api
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api
+    PRIVATE ${BOARDCOMM_SRC_DIR}/daemon
+)
 
 add_library(bc_transport SHARED
     src/transport/udp_transport.c
@@ -62,8 +66,18 @@ add_executable(boardcommd
     src/daemon/protocol.c
     src/daemon/transport_manager.c
     src/daemon/config.c
+    src/daemon/topic_match.c
+    src/daemon/stats.c
+    src/daemon/fragment.c
+    src/shm/bc_shm.c
 )
-target_link_libraries(boardcommd PRIVATE boardcomm_log bc_transport)
+target_link_libraries(boardcommd PRIVATE boardcomm_log bc_transport dl rt)
+
+add_executable(test_topic_match
+    tests/test_topic_match.c
+    src/daemon/topic_match.c
+)
+target_include_directories(test_topic_match PRIVATE ${BOARDCOMM_SRC_DIR}/daemon)
 
 add_executable(boardcomm_pub examples/pub.c)
 target_link_libraries(boardcomm_pub bc_api boardcomm_log)

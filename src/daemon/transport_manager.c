@@ -1,7 +1,55 @@
 #include "transport_manager.h"
 
+#include <dlfcn.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+typedef int (*bc_transport_plugin_init_fn)(bc_transport_t *transport, const bc_transport_config_t *cfg);
+
+static int load_plugin_transport(
+    bc_transport_manager_t *manager,
+    const char *plugin_path,
+    const bc_transport_config_t *cfg)
+{
+    void *handle;
+    bc_transport_plugin_init_fn init_fn;
+    bc_transport_t *transport;
+    char symbol[64];
+
+    if (manager->count >= BC_MAX_TRANSPORTS) {
+        return BC_ERR_NOMEM;
+    }
+
+    handle = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
+    if (handle == NULL) {
+        return BC_ERR_NOT_FOUND;
+    }
+
+    snprintf(symbol, sizeof(symbol), "bc_%s_transport_init", cfg->type == BC_TRANSPORT_TCP ? "tcp" : "udp");
+    init_fn = (bc_transport_plugin_init_fn)dlsym(handle, symbol);
+    if (init_fn == NULL) {
+        dlclose(handle);
+        return BC_ERR_NOT_FOUND;
+    }
+
+    transport = &manager->transports[manager->count];
+    if (init_fn(transport, cfg) != BC_OK) {
+        dlclose(handle);
+        return BC_ERR;
+    }
+    if (transport->ops == NULL || transport->ops->open == NULL ||
+        transport->ops->open(transport) != BC_OK) {
+        if (transport->ops != NULL && transport->ops->close != NULL) {
+            transport->ops->close(transport);
+        }
+        dlclose(handle);
+        return BC_ERR;
+    }
+
+    manager->count++;
+    return BC_OK;
+}
 
 int bc_transport_manager_init(bc_transport_manager_t *manager, const bc_config_t *cfg)
 {
@@ -31,6 +79,13 @@ int bc_transport_manager_init(bc_transport_manager_t *manager, const bc_config_t
         if (transport->ops->open(transport) == BC_OK) {
             manager->count++;
         }
+    }
+
+    for (size_t i = 0; i < cfg->plugin_count; ++i) {
+        if (cfg->transport_count == 0) {
+            break;
+        }
+        (void)load_plugin_transport(manager, cfg->plugins[i], &cfg->transports[0]);
     }
 
     return manager->count > 0 ? BC_OK : BC_ERR_NOT_FOUND;

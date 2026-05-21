@@ -68,6 +68,7 @@ static int uart_send(bc_transport_t *transport, const uint8_t *data, size_t len)
         }
         return BC_ERR_IO;
     }
+    (void)tcdrain(transport->fd);
     return BC_OK;
 }
 

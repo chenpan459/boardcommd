@@ -1,15 +1,23 @@
 #include "client_manager.h"
 
+#include "bc_shm.h"
 #include "ipc_protocol.h"
+#include "stats.h"
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#ifdef __linux__
+#include <sys/types.h>
+#endif
 
 #define BC_CLIENT_RX_CAP (sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
 #define BC_CLIENT_TX_CAP (1024u * 1024u)
@@ -21,12 +29,16 @@ struct bc_client_ctx {
     size_t tx_off;
     size_t tx_len;
     uint8_t tx_buf[BC_CLIENT_TX_CAP];
+    bc_shm_session_t shm;
+    int shm_ready;
     bc_client_manager_t *manager;
     struct bc_client_ctx *next;
 };
 
 static void on_client_event(int fd, uint32_t events, void *user);
 static int process_messages(bc_client_ctx_t *client);
+static int enqueue_client_tx(bc_client_ctx_t *client, const void *data, size_t len);
+static int send_stats_reply(bc_client_ctx_t *client);
 
 static void link_client(bc_client_manager_t *manager, bc_client_ctx_t *client)
 {
@@ -65,8 +77,172 @@ static void close_client(bc_client_ctx_t *client)
     bc_reactor_del(manager->reactor, fd);
     bc_message_bus_remove_client(manager->bus, fd);
     unlink_client(manager, client);
+    if (client->shm_ready) {
+        bc_shm_close(&client->shm);
+    }
     close(fd);
     free(client);
+}
+
+static int send_fd(int fd, int pass_fd)
+{
+    struct msghdr msg;
+    struct iovec iov;
+    char byte = 1;
+    char cmsg_buf[CMSG_SPACE(sizeof(int))];
+    struct cmsghdr *cmsg;
+
+    memset(&msg, 0, sizeof(msg));
+    iov.iov_base = &byte;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = cmsg_buf;
+    msg.msg_controllen = sizeof(cmsg_buf);
+
+    cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pass_fd, sizeof(int));
+
+    return sendmsg(fd, &msg, MSG_NOSIGNAL) > 0 ? BC_OK : BC_ERR_IO;
+}
+
+static int setup_client_shm(bc_client_ctx_t *client)
+{
+    bc_shm_session_t daemon_side;
+    int rc;
+
+    rc = bc_shm_create(&daemon_side);
+    if (rc != BC_OK) {
+        return rc;
+    }
+
+    rc = send_fd(client->fd, daemon_side.fd);
+    if (rc != BC_OK) {
+        bc_shm_close(&daemon_side);
+        return rc;
+    }
+
+    client->shm = daemon_side;
+    client->shm_ready = 1;
+    return BC_OK;
+}
+
+static int process_ipc_payload(
+    bc_client_ctx_t *client,
+    const bc_ipc_header_t *header,
+    const char *channel,
+    const char *topic,
+    const uint8_t *payload)
+{
+    bc_client_manager_t *manager = client->manager;
+    bc_message_t msg;
+
+    if (header->type == BC_IPC_SUBSCRIBE) {
+        (void)bc_message_bus_subscribe(manager->bus, client->fd, topic);
+        return BC_OK;
+    }
+    if (header->type == BC_IPC_PUBLISH) {
+        memset(&msg, 0, sizeof(msg));
+        snprintf(msg.channel, sizeof(msg.channel), "%s", channel);
+        snprintf(msg.topic, sizeof(msg.topic), "%s", topic);
+        msg.payload_len = header->payload_len;
+        memcpy(msg.payload, payload, header->payload_len);
+        if (header->version >= BC_IPC_VERSION) {
+            msg.dst_node = header->dst_node;
+            msg.qos = header->qos;
+            msg.flags = header->flags;
+            msg.seq = header->seq;
+        }
+        return bc_message_bus_publish(manager->bus, client->fd, &msg);
+    }
+    if (header->type == BC_IPC_STATS) {
+        return send_stats_reply(client);
+    }
+    if (header->type == BC_IPC_SHM_SETUP) {
+        return setup_client_shm(client);
+    }
+    if (header->type == BC_IPC_SHM_KICK) {
+        return BC_OK;
+    }
+    return BC_ERR_INVALID;
+}
+
+static int process_frame_buffer(bc_client_ctx_t *client, const uint8_t *data, size_t len)
+{
+    bc_ipc_header_t header;
+    char channel[BC_MAX_CHANNEL_LEN] = {0};
+    char topic[BC_MAX_TOPIC_LEN] = {0};
+    size_t header_size;
+    const uint8_t *frame;
+    int rc;
+
+    if (len < offsetof(bc_ipc_header_t, dst_node)) {
+        return BC_ERR_NOT_FOUND;
+    }
+
+    memcpy(&header, data, sizeof(header));
+    if (header.magic != BC_IPC_MAGIC) {
+        return BC_ERR_INVALID;
+    }
+
+    header_size = bc_ipc_header_size(header.version);
+    if (len < header_size) {
+        return BC_ERR_NOT_FOUND;
+    }
+    if (header.channel_len >= BC_MAX_CHANNEL_LEN ||
+        header.topic_len == 0 ||
+        header.topic_len >= BC_MAX_TOPIC_LEN ||
+        header.payload_len > BC_MAX_PAYLOAD_LEN) {
+        return BC_ERR_INVALID;
+    }
+    if (len < header_size + header.channel_len + header.topic_len + header.payload_len) {
+        return BC_ERR_NOT_FOUND;
+    }
+
+    frame = data + header_size;
+    memcpy(channel, frame, header.channel_len);
+    channel[header.channel_len] = '\0';
+    memcpy(topic, frame + header.channel_len, header.topic_len);
+    topic[header.topic_len] = '\0';
+
+    rc = process_ipc_payload(
+        client,
+        &header,
+        channel,
+        topic,
+        frame + header.channel_len + header.topic_len);
+    return rc;
+}
+
+static int drain_client_shm(bc_client_ctx_t *client)
+{
+    uint8_t frame[BC_CLIENT_RX_CAP];
+    size_t frame_len;
+    int rc;
+
+    if (!client->shm_ready) {
+        return BC_OK;
+    }
+
+    for (;;) {
+        rc = bc_shm_ring_read(client->shm.rx, frame, sizeof(frame), &frame_len);
+        if (rc == BC_ERR_NOT_FOUND) {
+            return BC_OK;
+        }
+        if (rc != BC_OK) {
+            return rc;
+        }
+        rc = process_frame_buffer(client, frame, frame_len);
+        if (rc == BC_ERR_NOMEM) {
+            return rc;
+        }
+        if (rc != BC_OK) {
+            return rc;
+        }
+    }
 }
 
 static int update_client_events(bc_client_ctx_t *client)
@@ -155,62 +331,67 @@ static int deliver_to_client(void *user, int client_fd, const void *data, size_t
     if (client == NULL) {
         return BC_ERR_NOT_FOUND;
     }
+    if (client->shm_ready) {
+        int rc = bc_shm_ring_write(client->shm.tx, data, len);
+        if (rc == BC_OK) {
+            bc_ipc_header_t kick;
+            memset(&kick, 0, sizeof(kick));
+            kick.magic = BC_IPC_MAGIC;
+            kick.version = BC_IPC_VERSION;
+            kick.type = BC_IPC_SHM_KICK;
+            (void)enqueue_client_tx(client, &kick, sizeof(kick));
+        }
+        return rc;
+    }
     return enqueue_client_tx(client, data, len);
+}
+
+static int send_stats_reply(bc_client_ctx_t *client)
+{
+    const bc_stats_t *stats = bc_message_bus_stats(client->manager->bus);
+    bc_ipc_header_t header;
+
+    if (stats == NULL) {
+        return BC_ERR_INVALID;
+    }
+
+    memset(&header, 0, sizeof(header));
+    header.magic = BC_IPC_MAGIC;
+    header.version = BC_IPC_VERSION;
+    header.type = BC_IPC_STATS;
+    header.payload_len = (uint32_t)sizeof(*stats);
+    return enqueue_client_tx(client, &header, sizeof(header)) != BC_OK ||
+        enqueue_client_tx(client, stats, sizeof(*stats)) != BC_OK
+        ? BC_ERR_IO
+        : BC_OK;
 }
 
 static int process_one_message(bc_client_ctx_t *client)
 {
-    bc_client_manager_t *manager = client->manager;
-    bc_ipc_header_t header;
-    char channel[BC_MAX_CHANNEL_LEN] = {0};
-    char topic[BC_MAX_TOPIC_LEN] = {0};
-    bc_message_t msg;
     size_t frame_len;
-    const uint8_t *frame;
     int rc;
 
-    if (client->rx_len < sizeof(header)) {
+    if (client->rx_len < offsetof(bc_ipc_header_t, dst_node)) {
         return BC_ERR_NOT_FOUND;
     }
 
-    memcpy(&header, client->rx_buf, sizeof(header));
-    if (
-        header.magic != BC_IPC_MAGIC ||
-        header.channel_len >= BC_MAX_CHANNEL_LEN ||
-        header.topic_len == 0 ||
-        header.topic_len >= BC_MAX_TOPIC_LEN ||
-        header.payload_len > BC_MAX_PAYLOAD_LEN) {
-        return BC_ERR_INVALID;
-    }
-
-    frame_len = sizeof(header) + header.channel_len + header.topic_len + header.payload_len;
-    if (frame_len > sizeof(client->rx_buf)) {
-        return BC_ERR_INVALID;
-    }
-    if (client->rx_len < frame_len) {
-        return BC_ERR_NOT_FOUND;
-    }
-
-    frame = client->rx_buf + sizeof(header);
-    memcpy(channel, frame, header.channel_len);
-    channel[header.channel_len] = '\0';
-    memcpy(topic, frame + header.channel_len, header.topic_len);
-    topic[header.topic_len] = '\0';
-
-    if (header.type == BC_IPC_SUBSCRIBE) {
-        (void)bc_message_bus_subscribe(manager->bus, client->fd, topic);
-    } else if (header.type == BC_IPC_PUBLISH) {
-        memset(&msg, 0, sizeof(msg));
-        snprintf(msg.channel, sizeof(msg.channel), "%s", channel);
-        snprintf(msg.topic, sizeof(msg.topic), "%s", topic);
-        msg.payload_len = header.payload_len;
-        memcpy(msg.payload, frame + header.channel_len + header.topic_len, msg.payload_len);
-        rc = bc_message_bus_publish(manager->bus, client->fd, &msg);
-        if (rc != BC_OK) {
-            return rc;
+    {
+        bc_ipc_header_t header;
+        memcpy(&header, client->rx_buf, sizeof(header));
+        if (header.magic != BC_IPC_MAGIC) {
+            return BC_ERR_INVALID;
         }
-    } else {
-        return BC_ERR_INVALID;
+        frame_len = bc_ipc_header_size(header.version) + header.channel_len + header.topic_len +
+            header.payload_len;
+    }
+
+    if (frame_len > sizeof(client->rx_buf) || client->rx_len < frame_len) {
+        return client->rx_len < frame_len ? BC_ERR_NOT_FOUND : BC_ERR_INVALID;
+    }
+
+    rc = process_frame_buffer(client, client->rx_buf, frame_len);
+    if (rc != BC_OK) {
+        return rc;
     }
 
     memmove(client->rx_buf, client->rx_buf + frame_len, client->rx_len - frame_len);
@@ -238,6 +419,7 @@ static int process_messages(bc_client_ctx_t *client)
 static void on_client_event(int fd, uint32_t events, void *user)
 {
     bc_client_ctx_t *client = user;
+    int rc;
 
     if ((events & EPOLLOUT) != 0) {
         if (flush_client_tx(client) != BC_OK) {
@@ -245,6 +427,15 @@ static void on_client_event(int fd, uint32_t events, void *user)
             return;
         }
         resume_pending_publishers(client->manager);
+    }
+
+    rc = drain_client_shm(client);
+    if (rc == BC_ERR_NOMEM) {
+        return;
+    }
+    if (rc != BC_OK) {
+        close_client(client);
+        return;
     }
 
     if ((events & (EPOLLHUP | EPOLLERR)) != 0 && (events & EPOLLIN) == 0) {
@@ -262,10 +453,16 @@ static void on_client_event(int fd, uint32_t events, void *user)
 
         n = read(fd, client->rx_buf + client->rx_len, sizeof(client->rx_buf) - client->rx_len);
         if (n > 0) {
-            int rc;
-
             client->rx_len += (size_t)n;
             rc = process_messages(client);
+            if (rc == BC_ERR_NOMEM) {
+                return;
+            }
+            if (rc != BC_OK) {
+                close_client(client);
+                return;
+            }
+            rc = drain_client_shm(client);
             if (rc == BC_ERR_NOMEM) {
                 return;
             }
@@ -290,10 +487,32 @@ static void on_client_event(int fd, uint32_t events, void *user)
     }
 }
 
+static int accept_client_auth(bc_client_manager_t *manager, int client_fd)
+{
+#ifdef SO_PEERCRED
+    if (manager->socket_uid > 0) {
+        struct ucred cred;
+        socklen_t cred_len = sizeof(cred);
+
+        if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cred_len) != 0) {
+            return BC_ERR_AUTH;
+        }
+        if ((unsigned int)cred.uid != manager->socket_uid) {
+            return BC_ERR_AUTH;
+        }
+    }
+#else
+    (void)manager;
+    (void)client_fd;
+#endif
+    return BC_OK;
+}
+
 static void on_server_event(int fd, uint32_t events, void *user)
 {
     bc_client_manager_t *manager = user;
 
+    (void)fd;
     (void)events;
     for (;;) {
         int client_fd = accept4(fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
@@ -304,6 +523,11 @@ static void on_server_event(int fd, uint32_t events, void *user)
                 continue;
             }
             break;
+        }
+
+        if (accept_client_auth(manager, client_fd) != BC_OK) {
+            close(client_fd);
+            continue;
         }
 
         client = calloc(1, sizeof(*client));
@@ -326,6 +550,7 @@ static void on_server_event(int fd, uint32_t events, void *user)
 int bc_client_manager_init(
     bc_client_manager_t *manager,
     const char *socket_path,
+    unsigned int socket_uid,
     bc_reactor_t *reactor,
     bc_message_bus_t *bus)
 {
@@ -333,6 +558,7 @@ int bc_client_manager_init(
 
     memset(manager, 0, sizeof(*manager));
     manager->server_fd = -1;
+    manager->socket_uid = socket_uid;
     manager->reactor = reactor;
     manager->bus = bus;
     snprintf(manager->socket_path, sizeof(manager->socket_path), "%s", socket_path);

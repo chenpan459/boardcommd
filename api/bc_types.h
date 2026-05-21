@@ -19,6 +19,14 @@ typedef enum {
     BC_FILE_PKT_END = 3,
 } bc_file_pkt_type_t;
 
+#define BC_FLAG_FRAGMENT 0x0001u
+#define BC_FLAG_ACK 0x0002u
+
+#define BC_QOS_AT_MOST_ONCE 0u
+#define BC_QOS_AT_LEAST_ONCE 1u
+
+#define BC_IPC_VERSION 2u
+
 typedef enum {
     BC_OK = 0,
     BC_ERR = -1,
@@ -27,7 +35,26 @@ typedef enum {
     BC_ERR_NOMEM = -4,
     BC_ERR_NOT_FOUND = -5,
     BC_ERR_TIMEOUT = -6,
+    BC_ERR_AUTH = -7,
 } bc_status_t;
+
+typedef struct {
+    uint32_t dst_node;
+    uint16_t qos;
+    uint16_t flags;
+} bc_publish_opts_t;
+
+typedef struct {
+    uint64_t pub_local;
+    uint64_t pub_network;
+    uint64_t pub_failed;
+    uint64_t rx_network;
+    uint64_t rx_local;
+    uint64_t rx_forward;
+    uint64_t rx_drop;
+    uint64_t ack_sent;
+    uint64_t ack_recv;
+} bc_client_stats_t;
 
 typedef struct {
     uint32_t src_node;

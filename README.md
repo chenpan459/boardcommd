@@ -203,7 +203,56 @@ transport udp0 udp 192.168.1.20:9101 9100 0
 
 对端板如果要回发，则对端配置里的 `remote_ip:remote_port` 应该指向本板 IP 和本板监听端口。
 
-## Test Examples
+TCP 监听模式：`local_port > 0` 时在 `endpoint` 指定 bind 地址并监听该端口；`local_port = 0` 时为客户端连接模式。
+
+```text
+transport tcps0 tcp 0.0.0.0:9300 9300 0   # 监听 9300
+transport tcpc0 tcp 192.168.1.20:9300 0 0   # 连接对端
+```
+
+额外配置项：
+
+```text
+node_id 1
+socket /tmp/boardcommd.sock
+socket_uid 0          # 非 0 时启用 Unix socket SO_PEERCRED 校验
+require_route         # 无匹配 route 时 publish 返回错误
+no_bridge             # 关闭 dst_node=0 的网络桥接转发
+plugin /path/to/libcustom.so
+```
+
+## 能力清单（P0–P3）
+
+| 级别 | 能力 |
+|------|------|
+| P0 | TCP 监听/连接状态机、`node_id` 写入帧、`handle_inbound` 网络桥接/转发、publish 路由/发送失败上报 |
+| P1 | QoS1 ACK、分片重组（>1392B）、订阅通配符 `telemetry.*`、SHM 本地 IPC 快路径 |
+| P2 | 配置校验、transport `dlopen` 插件、daemon 统计、`SO_PEERCRED` 鉴权、SIGINT/SIGTERM 优雅退出、UART `tcdrain`、单元测试 |
+| P3 | `bc_context_*` 多实例、`bc_write_ex` 扩展发布、`bc_discover_nodes`/`bc_persist_enable` 桩 API |
+
+扩展 API 示例：
+
+```c
+bc_publish_opts_t opts = {.dst_node = 2, .qos = BC_QOS_AT_LEAST_ONCE};
+bc_write_ex(h, NULL, "telemetry.temp", &temp, sizeof(temp), &opts);
+
+bc_enable_shm(h);  /* 或 bc_context_enable_shm(ctx) */
+
+bc_client_stats_t stats;
+bc_get_stats(h, &stats);
+
+bc_context_t *ctx = bc_context_create(NULL);
+bc_context_enable_shm(ctx);
+bc_context_publish(ctx, "demo.topic", "hi", 2);
+bc_context_destroy(ctx);
+```
+
+运行单元测试：
+
+```sh
+./build/test_topic_match
+```
+
 
 性能吞吐量 / 传输速率测试：
 

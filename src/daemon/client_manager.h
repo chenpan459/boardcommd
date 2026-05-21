@@ -9,6 +9,7 @@ typedef struct bc_client_ctx bc_client_ctx_t;
 typedef struct {
     int server_fd;
     char socket_path[128];
+    unsigned int socket_uid;
     bc_reactor_t *reactor;
     bc_message_bus_t *bus;
     bc_client_ctx_t *clients;
@@ -17,6 +18,7 @@ typedef struct {
 int bc_client_manager_init(
     bc_client_manager_t *manager,
     const char *socket_path,
+    unsigned int socket_uid,
     bc_reactor_t *reactor,
     bc_message_bus_t *bus);
 

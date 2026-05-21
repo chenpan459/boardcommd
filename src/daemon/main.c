@@ -9,6 +9,7 @@
 #include "bc_log.h"
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -20,6 +21,16 @@ typedef struct {
     uint8_t rx_buf[BC_MAX_FRAME_LEN * 2];
     size_t rx_len;
 } bc_transport_event_ctx_t;
+
+static bc_reactor_t *g_reactor;
+
+static void on_signal(int sig)
+{
+    (void)sig;
+    if (g_reactor != NULL) {
+        bc_reactor_stop(g_reactor);
+    }
+}
 
 static int process_transport_frames(bc_transport_event_ctx_t *ctx)
 {
@@ -38,7 +49,7 @@ static int process_transport_frames(bc_transport_event_ctx_t *ctx)
             return BC_ERR_INVALID;
         }
 
-        (void)bc_message_bus_deliver_local(ctx->bus, -1, &msg);
+        (void)bc_message_bus_handle_inbound(ctx->bus, &msg, ctx->transport);
         memmove(ctx->rx_buf, ctx->rx_buf + frame_len, ctx->rx_len - frame_len);
         ctx->rx_len -= frame_len;
     }
@@ -48,7 +59,10 @@ static void on_transport_event(int fd, uint32_t events, void *user)
 {
     bc_transport_event_ctx_t *ctx = user;
 
-    (void)fd;
+    if (ctx->transport->ops != NULL && ctx->transport->ops->handle_event != NULL) {
+        (void)ctx->transport->ops->handle_event(ctx->transport, fd, events);
+    }
+
     if ((events & EPOLLIN) == 0) {
         return;
     }
@@ -61,7 +75,7 @@ static void on_transport_event(int fd, uint32_t events, void *user)
             return;
         }
 
-        n = read(ctx->transport->fd, ctx->rx_buf + ctx->rx_len, sizeof(ctx->rx_buf) - ctx->rx_len);
+        n = read(fd, ctx->rx_buf + ctx->rx_len, sizeof(ctx->rx_buf) - ctx->rx_len);
         if (n > 0) {
             ctx->rx_len += (size_t)n;
             if (process_transport_frames(ctx) != BC_OK) {
@@ -81,6 +95,41 @@ static void on_transport_event(int fd, uint32_t events, void *user)
         }
         return;
     }
+}
+
+static int register_transport_fds(
+    bc_reactor_t *reactor,
+    bc_transport_t *transport,
+    bc_transport_event_ctx_t *ctx)
+{
+    int fds[4];
+    size_t count = 0;
+    size_t i;
+
+    if (transport->ops != NULL && transport->ops->get_fds != NULL &&
+        transport->ops->get_fds(transport, fds, &count) == BC_OK && count > 0) {
+        for (i = 0; i < count; ++i) {
+            uint32_t events = EPOLLIN | EPOLLHUP | EPOLLERR;
+            if (transport->type == BC_TRANSPORT_TCP) {
+                events |= EPOLLOUT;
+            }
+            if (bc_reactor_add(reactor, fds[i], events, on_transport_event, ctx) != BC_OK) {
+                return BC_ERR_IO;
+            }
+        }
+        return BC_OK;
+    }
+
+    if (transport->fd >= 0) {
+        return bc_reactor_add(
+            reactor,
+            transport->fd,
+            EPOLLIN | EPOLLHUP | EPOLLERR,
+            on_transport_event,
+            ctx);
+    }
+
+    return BC_OK;
 }
 
 int main(int argc, char **argv)
@@ -108,6 +157,10 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    g_reactor = &reactor;
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+
     if (bc_transport_manager_init(&transport_manager, &config) != BC_OK) {
         BC_LOGE("boardcommd", "failed to initialize transports");
         bc_reactor_close(&reactor);
@@ -117,8 +170,20 @@ int main(int argc, char **argv)
 
     bc_router_init(&router, &config, transport_manager.transports, transport_manager.count);
     bc_message_bus_init(&bus, &router);
+    bc_message_bus_configure(
+        &bus,
+        config.node_id,
+        transport_manager.transports,
+        transport_manager.count,
+        config.require_route,
+        config.bridge_broadcast);
 
-    if (bc_client_manager_init(&client_manager, config.socket_path, &reactor, &bus) != BC_OK) {
+    if (bc_client_manager_init(
+            &client_manager,
+            config.socket_path,
+            config.socket_uid,
+            &reactor,
+            &bus) != BC_OK) {
         BC_LOGE("boardcommd", "failed to initialize client IPC: %s", config.socket_path);
         bc_transport_manager_close(&transport_manager);
         bc_reactor_close(&reactor);
@@ -130,18 +195,21 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < transport_manager.count; ++i) {
         transport_contexts[i].transport = &transport_manager.transports[i];
         transport_contexts[i].bus = &bus;
-        (void)bc_reactor_add(
-            &reactor,
-            transport_manager.transports[i].fd,
-            EPOLLIN | EPOLLHUP | EPOLLERR,
-            on_transport_event,
-            &transport_contexts[i]);
+        if (register_transport_fds(&reactor, &transport_manager.transports[i], &transport_contexts[i]) != BC_OK) {
+            BC_LOGE("boardcommd", "failed to register transport fds");
+            bc_client_manager_close(&client_manager);
+            bc_transport_manager_close(&transport_manager);
+            bc_reactor_close(&reactor);
+            bc_log_close();
+            return EXIT_FAILURE;
+        }
     }
 
     BC_LOGI(
         "boardcommd",
-        "started: version=%s socket=%s transports=%zu",
+        "started: version=%s node=%u socket=%s transports=%zu",
         BOARDCOMM_VERSION,
+        config.node_id,
         config.socket_path,
         transport_manager.count);
     (void)bc_reactor_run(&reactor);

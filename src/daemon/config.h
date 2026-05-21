@@ -36,6 +36,11 @@ typedef struct {
 typedef struct {
     unsigned int node_id;
     char socket_path[128];
+    unsigned int socket_uid;
+    int require_route;
+    int bridge_broadcast;
+    char plugins[BC_MAX_TRANSPORTS][128];
+    size_t plugin_count;
     bc_transport_config_t transports[BC_MAX_TRANSPORTS];
     size_t transport_count;
     bc_channel_config_t channels[BC_MAX_CHANNELS];
@@ -46,5 +51,6 @@ typedef struct {
 
 int bc_config_load(const char *path, bc_config_t *cfg);
 void bc_config_load_defaults(bc_config_t *cfg);
+int bc_config_validate(const bc_config_t *cfg);
 
 #endif

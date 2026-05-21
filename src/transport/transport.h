@@ -12,6 +12,8 @@ typedef struct {
     int (*open)(bc_transport_t *transport);
     void (*close)(bc_transport_t *transport);
     int (*send)(bc_transport_t *transport, const uint8_t *data, size_t len);
+    int (*get_fds)(bc_transport_t *transport, int *fds, size_t *count);
+    int (*handle_event)(bc_transport_t *transport, int fd, uint32_t events);
 } bc_transport_ops_t;
 
 struct bc_transport {

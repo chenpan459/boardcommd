@@ -19,6 +19,7 @@ void bc_config_load_defaults(bc_config_t *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
     cfg->node_id = 1;
+    cfg->bridge_broadcast = 1;
     snprintf(cfg->socket_path, sizeof(cfg->socket_path), "%s", BC_DEFAULT_SOCKET_PATH);
 
     bc_transport_config_t *udp = &cfg->transports[cfg->transport_count++];
@@ -36,6 +37,48 @@ void bc_config_load_defaults(bc_config_t *cfg)
     snprintf(channel->transport, sizeof(channel->transport), "udp0");
 }
 
+static int transport_exists(const bc_config_t *cfg, const char *name)
+{
+    for (size_t i = 0; i < cfg->transport_count; ++i) {
+        if (strcmp(cfg->transports[i].name, name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int bc_config_validate(const bc_config_t *cfg)
+{
+    if (cfg == NULL || cfg->node_id == 0) {
+        return BC_ERR_INVALID;
+    }
+    if (cfg->transport_count == 0) {
+        return BC_ERR_NOT_FOUND;
+    }
+
+    for (size_t i = 0; i < cfg->transport_count; ++i) {
+        for (size_t j = i + 1; j < cfg->transport_count; ++j) {
+            if (strcmp(cfg->transports[i].name, cfg->transports[j].name) == 0) {
+                return BC_ERR_INVALID;
+            }
+        }
+    }
+
+    for (size_t i = 0; i < cfg->channel_count; ++i) {
+        if (!transport_exists(cfg, cfg->channels[i].transport)) {
+            return BC_ERR_NOT_FOUND;
+        }
+    }
+
+    for (size_t i = 0; i < cfg->route_count; ++i) {
+        if (!transport_exists(cfg, cfg->routes[i].transport)) {
+            return BC_ERR_NOT_FOUND;
+        }
+    }
+
+    return BC_OK;
+}
+
 int bc_config_load(const char *path, bc_config_t *cfg)
 {
     char line[256];
@@ -43,17 +86,18 @@ int bc_config_load(const char *path, bc_config_t *cfg)
 
     bc_config_load_defaults(cfg);
     if (path == NULL) {
-        return BC_OK;
+        return bc_config_validate(cfg);
     }
 
     fp = fopen(path, "r");
     if (fp == NULL) {
-        return BC_OK;
+        return BC_ERR_NOT_FOUND;
     }
 
     cfg->transport_count = 0;
     cfg->channel_count = 0;
     cfg->route_count = 0;
+    cfg->plugin_count = 0;
 
     while (fgets(line, sizeof(line), fp) != NULL) {
         char kind[32] = {0};
@@ -67,7 +111,31 @@ int bc_config_load(const char *path, bc_config_t *cfg)
         if (sscanf(line, "socket %127s", cfg->socket_path) == 1) {
             continue;
         }
+        if (sscanf(line, "socket_uid %u", &cfg->socket_uid) == 1) {
+            continue;
+        }
+        if (strncmp(line, "require_route", 13) == 0) {
+            cfg->require_route = 1;
+            continue;
+        }
+        if (strncmp(line, "no_bridge", 9) == 0) {
+            cfg->bridge_broadcast = 0;
+            continue;
+        }
         if (sscanf(line, "%31s", kind) != 1) {
+            continue;
+        }
+        if (strcmp(kind, "plugin") == 0 && cfg->plugin_count < BC_MAX_TRANSPORTS) {
+            char plugin_path[128] = {0};
+
+            if (sscanf(line, "plugin %127s", plugin_path) == 1) {
+                snprintf(
+                    cfg->plugins[cfg->plugin_count],
+                    sizeof(cfg->plugins[cfg->plugin_count]),
+                    "%s",
+                    plugin_path);
+                cfg->plugin_count++;
+            }
             continue;
         }
         if (strcmp(kind, "transport") == 0 && cfg->transport_count < BC_MAX_TRANSPORTS) {
@@ -112,5 +180,5 @@ int bc_config_load(const char *path, bc_config_t *cfg)
     }
 
     fclose(fp);
-    return BC_OK;
+    return bc_config_validate(cfg);
 }
