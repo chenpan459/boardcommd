@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static double now_sec(void)
 {
@@ -67,11 +68,22 @@ int main(int argc, char **argv)
         double now;
         uint64_t seq = sent + failed;
 
+        ssize_t w;
+
         memcpy(payload, &seq, sizeof(seq));
-        if (bc_write(handle, topic, payload, payload_size) >= 0) {
-            sent++;
-        } else {
+        for (;;) {
+            w = bc_write(handle, topic, payload, payload_size);
+            if (w >= 0) {
+                sent++;
+                break;
+            }
+            if (w == BC_ERR_NOMEM) {
+                usleep(50);
+                continue;
+            }
             failed++;
+            usleep(1000);
+            break;
         }
 
         now = now_sec();

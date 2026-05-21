@@ -155,7 +155,7 @@ int main(int argc, char **argv)
             sizeof(payload),
             100);
 
-        if (n == BC_ERR_NOT_FOUND) {
+        if (n == BC_ERR_TIMEOUT || n == BC_ERR_NOT_FOUND) {
             double now = now_sec();
 
             if (now - state.last_report >= 1.0) {
@@ -164,7 +164,7 @@ int main(int argc, char **argv)
             continue;
         }
         if (n < 0) {
-            BC_LOGE("perf_sub", "read failed");
+            BC_LOGE("perf_sub", "read failed rc=%zd", n);
             (void)bc_close(handle);
             bc_log_close();
             return 1;

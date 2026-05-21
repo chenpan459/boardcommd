@@ -1,6 +1,7 @@
 #include "transport.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,7 +98,13 @@ static int udp_send(bc_transport_t *transport, const uint8_t *data, size_t len)
         (struct sockaddr *)&impl->remote,
         sizeof(impl->remote));
 
-    return n == (ssize_t)len ? BC_OK : BC_ERR_IO;
+    if (n == (ssize_t)len) {
+        return BC_OK;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return BC_ERR_NOMEM;
+    }
+    return BC_ERR_IO;
 }
 
 static const bc_transport_ops_t udp_ops = {

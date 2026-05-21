@@ -300,7 +300,10 @@ int bc_message_bus_publish(bc_message_bus_t *bus, int source_fd, bc_message_t *m
     if (need_network && route.transport != NULL) {
         network_rc = send_on_transport(bus, route.transport, msg);
         if (network_rc != BC_OK) {
-            return network_rc;
+            /* Best-effort network for at-most-once; do not tear down local IPC. */
+            if (msg->qos >= BC_QOS_AT_LEAST_ONCE) {
+                return local_rc == BC_ERR_NOMEM ? BC_ERR_NOMEM : network_rc;
+            }
         }
     }
 

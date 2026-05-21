@@ -19,8 +19,9 @@
 #include <sys/types.h>
 #endif
 
-#define BC_CLIENT_RX_CAP (sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
-#define BC_CLIENT_TX_CAP (1024u * 1024u)
+#define BC_CLIENT_FRAME_MAX (sizeof(bc_ipc_header_t) + BC_MAX_CHANNEL_LEN + BC_MAX_TOPIC_LEN + BC_MAX_PAYLOAD_LEN)
+#define BC_CLIENT_RX_CAP (256u * 1024u)
+#define BC_CLIENT_TX_CAP (4u * 1024u * 1024u)
 
 struct bc_client_ctx {
     int fd;
@@ -219,7 +220,7 @@ static int process_frame_buffer(bc_client_ctx_t *client, const uint8_t *data, si
 
 static int drain_client_shm(bc_client_ctx_t *client)
 {
-    uint8_t frame[BC_CLIENT_RX_CAP];
+    uint8_t frame[BC_CLIENT_FRAME_MAX];
     size_t frame_len;
     int rc;
 
@@ -385,7 +386,7 @@ static int process_one_message(bc_client_ctx_t *client)
             header.payload_len;
     }
 
-    if (frame_len > sizeof(client->rx_buf) || client->rx_len < frame_len) {
+    if (frame_len > BC_CLIENT_FRAME_MAX || client->rx_len < frame_len) {
         return client->rx_len < frame_len ? BC_ERR_NOT_FOUND : BC_ERR_INVALID;
     }
 
@@ -431,6 +432,7 @@ static void on_client_event(int fd, uint32_t events, void *user)
 
     rc = drain_client_shm(client);
     if (rc == BC_ERR_NOMEM) {
+        resume_pending_publishers(client->manager);
         return;
     }
     if (rc != BC_OK) {
@@ -447,7 +449,7 @@ static void on_client_event(int fd, uint32_t events, void *user)
         ssize_t n;
 
         if (client->rx_len >= sizeof(client->rx_buf)) {
-            close_client(client);
+            /* Backpressure: subscriber not keeping up; retry after tx drain. */
             return;
         }
 
@@ -456,6 +458,7 @@ static void on_client_event(int fd, uint32_t events, void *user)
             client->rx_len += (size_t)n;
             rc = process_messages(client);
             if (rc == BC_ERR_NOMEM) {
+                resume_pending_publishers(client->manager);
                 return;
             }
             if (rc != BC_OK) {
