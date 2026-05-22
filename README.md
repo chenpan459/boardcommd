@@ -203,12 +203,21 @@ transport udp0 udp 192.168.1.20:9101 9100 0
 
 对端板如果要回发，则对端配置里的 `remote_ip:remote_port` 应该指向本板 IP 和本板监听端口。
 
-TCP 监听模式：`local_port > 0` 时在 `endpoint` 指定 bind 地址并监听该端口；`local_port = 0` 时为客户端连接模式。
+TCP 必须明确一端监听、一端连接；两端不能都配成 client，也不能都 listen 同一端口。
+
+推荐用第 6 个字段写角色（`server` / `client`，也支持 `listen` / `connect`）：
 
 ```text
-transport tcps0 tcp 0.0.0.0:9300 9300 0   # 监听 9300
-transport tcpc0 tcp 192.168.1.20:9300 0 0   # 连接对端
+# 板 A：监听
+transport tcps0 tcp 0.0.0.0:9300 9300 0 server
+# 板 B：连接板 A
+transport tcpc0 tcp 192.168.1.10:9300 0 0 client
 ```
+
+- **server**：`endpoint` 为 bind 地址；监听端口优先用 `local_port`，若为 0 则用 `endpoint` 里的端口。
+- **client**：`endpoint` 为要连接的 `host:port`；`local_port` 忽略。
+
+未写角色时保持兼容：`local_port > 0` 视为 server，否则为 client（易与 UDP 的 `local_port` 语义混淆，两块板对接时务必写 `server`/`client`）。
 
 额外配置项：
 

@@ -15,12 +15,16 @@ typedef enum {
     BC_TRANSPORT_UART,
 } bc_transport_type_t;
 
+/* TCP only: -1 = auto (local_port>0 => listen), 0 = client, 1 = server */
+#define BC_TCP_ROLE_AUTO (-1)
+
 typedef struct {
     char name[32];
     bc_transport_type_t type;
     char endpoint[128];
     int local_port;
     int baudrate;
+    int tcp_listen;
 } bc_transport_config_t;
 
 typedef struct {

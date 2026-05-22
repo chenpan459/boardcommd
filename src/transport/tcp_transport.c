@@ -121,24 +121,45 @@ static int tcp_client_open(bc_transport_t *transport, bc_tcp_impl_t *impl)
     return BC_OK;
 }
 
+static int tcp_role_is_server(const bc_transport_config_t *cfg)
+{
+    if (cfg->tcp_listen >= 0) {
+        return cfg->tcp_listen != 0;
+    }
+    return cfg->local_port > 0;
+}
+
+static int tcp_listen_port(const bc_transport_config_t *cfg, int endpoint_port)
+{
+    if (cfg->local_port > 0) {
+        return cfg->local_port;
+    }
+    return endpoint_port;
+}
+
 static int tcp_open(bc_transport_t *transport)
 {
     bc_tcp_impl_t *impl = tcp_impl(transport);
+    const bc_transport_config_t *cfg = &transport->config;
+    int endpoint_port = 0;
 
     if (impl == NULL) {
         return BC_ERR_INVALID;
     }
 
-    if (transport->config.local_port > 0) {
-        impl->port = transport->config.local_port;
-        if (parse_endpoint(transport->config.endpoint, impl->host, sizeof(impl->host), &impl->port) != BC_OK) {
+    if (tcp_role_is_server(cfg)) {
+        if (parse_endpoint(cfg->endpoint, impl->host, sizeof(impl->host), &endpoint_port) != BC_OK) {
             snprintf(impl->host, sizeof(impl->host), "0.0.0.0");
+            endpoint_port = 0;
         }
-        impl->port = transport->config.local_port;
+        impl->port = tcp_listen_port(cfg, endpoint_port);
+        if (impl->port <= 0) {
+            return BC_ERR_INVALID;
+        }
         return tcp_listen_open(transport, impl);
     }
 
-    if (parse_endpoint(transport->config.endpoint, impl->host, sizeof(impl->host), &impl->port) != BC_OK) {
+    if (parse_endpoint(cfg->endpoint, impl->host, sizeof(impl->host), &impl->port) != BC_OK) {
         return BC_ERR_INVALID;
     }
     return tcp_client_open(transport, impl);

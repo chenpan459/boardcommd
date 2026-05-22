@@ -15,6 +15,19 @@ static bc_transport_type_t parse_transport_type(const char *value)
     return BC_TRANSPORT_UDP;
 }
 
+static void parse_tcp_role(bc_transport_config_t *transport, const char *role)
+{
+    transport->tcp_listen = BC_TCP_ROLE_AUTO;
+    if (role == NULL || role[0] == '\0') {
+        return;
+    }
+    if (strcmp(role, "server") == 0 || strcmp(role, "listen") == 0) {
+        transport->tcp_listen = 1;
+    } else if (strcmp(role, "client") == 0 || strcmp(role, "connect") == 0) {
+        transport->tcp_listen = 0;
+    }
+}
+
 void bc_config_load_defaults(bc_config_t *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
@@ -142,17 +155,25 @@ int bc_config_load(const char *path, bc_config_t *cfg)
             char name[32] = {0};
             char type[16] = {0};
             char endpoint[128] = {0};
+            char role[16] = {0};
             int local_port = 0;
             int baudrate = 0;
+            int fields;
 
-            if (sscanf(line, "transport %31s %15s %127s %d %d",
-                       name, type, endpoint, &local_port, &baudrate) >= 4) {
+            fields = sscanf(line, "transport %31s %15s %127s %d %d %15s",
+                            name, type, endpoint, &local_port, &baudrate, role);
+            if (fields >= 4) {
                 bc_transport_config_t *transport = &cfg->transports[cfg->transport_count++];
+
                 snprintf(transport->name, sizeof(transport->name), "%s", name);
                 transport->type = parse_transport_type(type);
                 snprintf(transport->endpoint, sizeof(transport->endpoint), "%s", endpoint);
                 transport->local_port = local_port;
                 transport->baudrate = baudrate;
+                transport->tcp_listen = BC_TCP_ROLE_AUTO;
+                if (transport->type == BC_TRANSPORT_TCP && fields >= 6) {
+                    parse_tcp_role(transport, role);
+                }
             }
             continue;
         }
