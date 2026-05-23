@@ -9,6 +9,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define BC_FILE_SEND_RETRY_MAX 64
+#define BC_FILE_DATA_PACE_US 500
+
 typedef struct __attribute__((packed)) {
     uint16_t magic;
     uint8_t type;
@@ -47,7 +50,13 @@ static ssize_t send_file_packet(
 {
     uint8_t payload[BC_MAX_PAYLOAD_LEN];
     bc_file_pkt_hdr_t hdr;
+    bc_publish_opts_t opts = {
+        .dst_node = 0,
+        .qos = BC_QOS_AT_LEAST_ONCE,
+        .flags = 0,
+    };
     size_t total;
+    int attempt;
 
     if (extra_len > BC_MAX_PAYLOAD_LEN - sizeof(hdr)) {
         return BC_ERR_INVALID;
@@ -64,10 +73,23 @@ static ssize_t send_file_packet(
         total += extra_len;
     }
 
-    if (channel != NULL && channel[0] != '\0') {
-        return bc_write_channel(handle, channel, topic, payload, total);
+    for (attempt = 0; attempt < BC_FILE_SEND_RETRY_MAX; ++attempt) {
+        ssize_t n = bc_write_ex(handle, channel, topic, payload, total, &opts);
+
+        if (n >= 0) {
+            if (type == BC_FILE_PKT_DATA && BC_FILE_DATA_PACE_US > 0) {
+                usleep(BC_FILE_DATA_PACE_US);
+            }
+            return n;
+        }
+        if (n == BC_ERR_NOMEM || n == BC_ERR_IO) {
+            usleep(1000 * (useconds_t)(attempt + 1));
+            continue;
+        }
+        return n;
     }
-    return bc_write(handle, topic, payload, total);
+
+    return BC_ERR_IO;
 }
 
 static int parse_file_packet(
@@ -310,10 +332,15 @@ static int recv_file_path(
 
         if (hdr.type == BC_FILE_PKT_DATA) {
             if (hdr.value != expected_seq || extra_len == 0) {
+                fprintf(
+                    stderr,
+                    "boardcomm file_recv: chunk seq mismatch got=%u expect=%u (network loss or send too fast)\n",
+                    hdr.value,
+                    expected_seq);
                 fclose(fp);
                 fp = NULL;
                 (void)unlink(path);
-                return BC_ERR_IO; /* likely dropped chunks (send too fast) */
+                return BC_ERR_IO;
             }
 
             if (fwrite(extra, 1, extra_len, fp) != extra_len) {
@@ -338,6 +365,13 @@ static int recv_file_path(
             got_end = 1;
 
             if (received != expected_size || hdr.value != ~crc) {
+                fprintf(
+                    stderr,
+                    "boardcomm file_recv: end check failed size=%u/%u crc=0x%08x/0x%08x\n",
+                    received,
+                    expected_size,
+                    hdr.value,
+                    ~crc);
                 (void)unlink(path);
                 return BC_ERR_IO;
             }

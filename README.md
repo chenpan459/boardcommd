@@ -133,7 +133,19 @@ boardcomm_file_recv [topic] [save_path] [timeout_ms] [channel]
 boardcomm_file_send [topic] <file_path> [channel]
 ```
 
-`timeout_ms` 为等待**第一包**的最长时间；大文件建议 `300000`（5 分钟）或更长。`rc=-6` 表示超时（常见原因：发送端启动太晚）。
+`timeout_ms` 为等待**第一包**的最长时间；大文件建议 `300000`（5 分钟）或更长。`rc=-6` 表示超时（常见原因：发送端启动太晚）。`rc=-3` 多为分片丢失或 CRC 不一致：跨板大文件请用 `route file.* tcp0`（或 `udpkcp`），并**先起接收端再起发送端**；同机联调走本地 IPC，不再重复打 UDP。
+
+跨板文件传输示例（板 B 为 TCP client）：
+
+```text
+# 板 A
+transport tcps0 tcp 0.0.0.0:9400 9400 0 server
+route file.* tcps0
+
+# 板 B
+transport tcpc0 tcp 192.168.1.10:9400 0 0 client
+route file.* tcpc0
+```
 
 文件分块会同时投递本地订阅者，并按 `route` / `channel` 走网络传输（与跨板一致）。同机联调也会经过 `route *` 等配置；跨板时在 `boardcomm.conf` 中把对端 IP/端口配到对应 `transport`，或使用 `bc_file_send_channel` / `bc_file_recv_channel` 指定 channel。
 

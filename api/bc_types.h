@@ -21,6 +21,7 @@ typedef enum {
 
 #define BC_FLAG_FRAGMENT 0x0001u
 #define BC_FLAG_ACK 0x0002u
+#define BC_FLAG_NO_BRIDGE 0x0004u
 
 #define BC_QOS_AT_MOST_ONCE 0u
 #define BC_QOS_AT_LEAST_ONCE 1u

@@ -262,6 +262,7 @@ int bc_message_bus_publish(bc_message_bus_t *bus, int source_fd, bc_message_t *m
 {
     bc_route_result_t route;
     int local_rc = BC_OK;
+    int local_delivered = 0;
     int network_rc = BC_OK;
     int need_network;
 
@@ -277,11 +278,17 @@ int bc_message_bus_publish(bc_message_bus_t *bus, int source_fd, bc_message_t *m
     need_network = should_forward(bus, msg) || msg->channel[0] != '\0' ||
         (msg->dst_node != 0 && msg->dst_node != bus->node_id);
 
+    if ((msg->flags & BC_FLAG_NO_BRIDGE) != 0) {
+        need_network = msg->channel[0] != '\0' ||
+            (msg->dst_node != 0 && msg->dst_node != bus->node_id);
+    }
+
     if (should_deliver_local(bus, msg)) {
         local_rc = bc_message_bus_deliver_local(bus, source_fd, msg);
         if (local_rc == BC_ERR_NOMEM) {
             /* keep error */
         } else if (local_rc > 0) {
+            local_delivered = local_rc;
             bus->stats.pub_local += (uint64_t)local_rc;
             local_rc = BC_OK;
         } else {
@@ -300,8 +307,8 @@ int bc_message_bus_publish(bc_message_bus_t *bus, int source_fd, bc_message_t *m
     if (need_network && route.transport != NULL) {
         network_rc = send_on_transport(bus, route.transport, msg);
         if (network_rc != BC_OK) {
-            /* Best-effort network for at-most-once; do not tear down local IPC. */
-            if (msg->qos >= BC_QOS_AT_LEAST_ONCE) {
+            /* Require network only when no local subscriber received the message. */
+            if (msg->qos >= BC_QOS_AT_LEAST_ONCE && local_delivered == 0) {
                 return local_rc == BC_ERR_NOMEM ? BC_ERR_NOMEM : network_rc;
             }
         }
