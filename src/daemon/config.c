@@ -9,10 +9,64 @@ static bc_transport_type_t parse_transport_type(const char *value)
     if (strcmp(value, "tcp") == 0) {
         return BC_TRANSPORT_TCP;
     }
-    if (strcmp(value, "uart") == 0) {
+    if (strcmp(value, "uart") == 0 || strcmp(value, "uart232") == 0 ||
+        strcmp(value, "uart485") == 0 || strcmp(value, "rs485") == 0) {
         return BC_TRANSPORT_UART;
     }
+    if (strcmp(value, "udpkcp") == 0) {
+        return BC_TRANSPORT_UDP_KCP;
+    }
     return BC_TRANSPORT_UDP;
+}
+
+static void parse_kcp_conv(bc_transport_config_t *transport, const char *extra)
+{
+    int conv;
+
+    transport->kcp_conv = 0;
+    if (extra == NULL || extra[0] == '\0') {
+        return;
+    }
+    conv = atoi(extra);
+    if (conv > 0) {
+        transport->kcp_conv = conv;
+    }
+}
+
+static void parse_uart_options(bc_transport_config_t *transport, const char *type, const char *extra)
+{
+    transport->uart_mode = BC_UART_MODE_232;
+    transport->rs485_de_gpio = BC_UART_GPIO_NONE;
+
+    if (strcmp(type, "uart485") == 0 || strcmp(type, "rs485") == 0) {
+        transport->uart_mode = BC_UART_MODE_485;
+    }
+
+    if (extra == NULL || extra[0] == '\0') {
+        return;
+    }
+
+    if (strncmp(extra, "485:", 4) == 0) {
+        transport->uart_mode = BC_UART_MODE_485;
+        transport->rs485_de_gpio = atoi(extra + 4);
+        return;
+    }
+    if (strcmp(extra, "485") == 0) {
+        transport->uart_mode = BC_UART_MODE_485;
+        return;
+    }
+    if (strcmp(extra, "232") == 0) {
+        transport->uart_mode = BC_UART_MODE_232;
+        return;
+    }
+
+    if (transport->uart_mode == BC_UART_MODE_485) {
+        int gpio = atoi(extra);
+
+        if (gpio >= 0) {
+            transport->rs485_de_gpio = gpio;
+        }
+    }
 }
 
 static void parse_tcp_role(bc_transport_config_t *transport, const char *role)
@@ -171,8 +225,15 @@ int bc_config_load(const char *path, bc_config_t *cfg)
                 transport->local_port = local_port;
                 transport->baudrate = baudrate;
                 transport->tcp_listen = BC_TCP_ROLE_AUTO;
+                transport->kcp_conv = 0;
+                transport->uart_mode = BC_UART_MODE_232;
+                transport->rs485_de_gpio = BC_UART_GPIO_NONE;
                 if (transport->type == BC_TRANSPORT_TCP && fields >= 6) {
                     parse_tcp_role(transport, role);
+                } else if (transport->type == BC_TRANSPORT_UDP_KCP && fields >= 6) {
+                    parse_kcp_conv(transport, role);
+                } else if (transport->type == BC_TRANSPORT_UART) {
+                    parse_uart_options(transport, type, fields >= 6 ? role : NULL);
                 }
             }
             continue;

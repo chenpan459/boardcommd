@@ -32,6 +32,7 @@ include_directories(
 add_library(boardcomm_log STATIC
     src/log/log.c
 )
+set_target_properties(boardcomm_log PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(boardcomm_log PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/api)
 
 add_library(bc_api SHARED
@@ -46,16 +47,21 @@ target_include_directories(bc_api
 )
 
 add_library(bc_transport SHARED
-    src/transport/udp_transport.c
-    src/transport/tcp_transport.c
-    src/transport/uart_transport.c
+    src/transport/udp/udp_transport.c
+    src/transport/udp/udp_kcp_transport.c
+    src/transport/udp/kcp/ikcp.c
+    src/transport/tcp/tcp_transport.c
+    src/transport/uart/uart_transport.c
 )
 target_include_directories(bc_transport
     PUBLIC
         ${BOARDCOMM_SRC_DIR}/transport
+        ${BOARDCOMM_SRC_DIR}/transport/udp
+        ${BOARDCOMM_SRC_DIR}/transport/udp/kcp
         ${BOARDCOMM_SRC_DIR}/daemon
         ${CMAKE_CURRENT_SOURCE_DIR}/api
 )
+target_link_libraries(bc_transport PRIVATE boardcomm_log)
 
 add_executable(boardcommd
     src/daemon/main.c

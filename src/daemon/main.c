@@ -63,10 +63,6 @@ static void on_transport_event(int fd, uint32_t events, void *user)
         (void)ctx->transport->ops->handle_event(ctx->transport, fd, events);
     }
 
-    if ((events & EPOLLIN) == 0) {
-        return;
-    }
-
     for (;;) {
         ssize_t n;
 
@@ -75,25 +71,53 @@ static void on_transport_event(int fd, uint32_t events, void *user)
             return;
         }
 
-        n = read(fd, ctx->rx_buf + ctx->rx_len, sizeof(ctx->rx_buf) - ctx->rx_len);
-        if (n > 0) {
-            ctx->rx_len += (size_t)n;
-            if (process_transport_frames(ctx) != BC_OK) {
-                ctx->rx_len = 0;
+        if (ctx->transport->ops != NULL && ctx->transport->ops->recv != NULL) {
+            size_t got = 0;
+            int rc = ctx->transport->ops->recv(
+                ctx->transport,
+                ctx->rx_buf + ctx->rx_len,
+                sizeof(ctx->rx_buf) - ctx->rx_len,
+                &got);
+
+            if (rc == BC_OK && got > 0) {
+                n = (ssize_t)got;
+            } else if (rc == BC_ERR_NOT_FOUND) {
+                return;
+            } else {
                 return;
             }
-            continue;
-        }
-        if (n == 0) {
+        } else {
+            int read_fd = ctx->transport->fd >= 0 ? ctx->transport->fd : fd;
+
+            if ((events & EPOLLIN) == 0) {
+                return;
+            }
+            n = read(read_fd, ctx->rx_buf + ctx->rx_len, sizeof(ctx->rx_buf) - ctx->rx_len);
+            if (n > 0) {
+                ctx->rx_len += (size_t)n;
+                if (process_transport_frames(ctx) != BC_OK) {
+                    ctx->rx_len = 0;
+                    return;
+                }
+                continue;
+            }
+            if (n == 0) {
+                return;
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return;
+            }
             return;
         }
-        if (errno == EINTR) {
-            continue;
-        }
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+
+        ctx->rx_len += (size_t)n;
+        if (process_transport_frames(ctx) != BC_OK) {
+            ctx->rx_len = 0;
             return;
         }
-        return;
     }
 }
 
@@ -106,13 +130,14 @@ static int register_transport_fds(
     size_t count = 0;
     size_t i;
 
+    if (transport->ops != NULL && transport->ops->bind_reactor != NULL) {
+        return transport->ops->bind_reactor(transport, reactor, on_transport_event, ctx);
+    }
+
     if (transport->ops != NULL && transport->ops->get_fds != NULL &&
         transport->ops->get_fds(transport, fds, &count) == BC_OK && count > 0) {
         for (i = 0; i < count; ++i) {
             uint32_t events = EPOLLIN | EPOLLHUP | EPOLLERR;
-            if (transport->type == BC_TRANSPORT_TCP) {
-                events |= EPOLLOUT;
-            }
             if (bc_reactor_add(reactor, fds[i], events, on_transport_event, ctx) != BC_OK) {
                 return BC_ERR_IO;
             }

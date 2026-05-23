@@ -1,8 +1,8 @@
 #include "transport.h"
 
-#include <arpa/inet.h>
+#include "endpoint.h"
+
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,24 +13,9 @@ typedef struct {
     struct sockaddr_in remote;
 } bc_udp_impl_t;
 
-static int parse_endpoint(const char *endpoint, char *host, size_t host_len, int *port)
+static bc_udp_impl_t *udp_impl(bc_transport_t *transport)
 {
-    const char *colon = strrchr(endpoint, ':');
-    size_t len;
-
-    if (colon == NULL) {
-        return BC_ERR_INVALID;
-    }
-
-    len = (size_t)(colon - endpoint);
-    if (len == 0 || len >= host_len) {
-        return BC_ERR_INVALID;
-    }
-
-    memcpy(host, endpoint, len);
-    host[len] = '\0';
-    *port = atoi(colon + 1);
-    return *port > 0 ? BC_OK : BC_ERR_INVALID;
+    return transport != NULL ? (bc_udp_impl_t *)transport->impl : NULL;
 }
 
 static int udp_open(bc_transport_t *transport)
@@ -43,7 +28,7 @@ static int udp_open(bc_transport_t *transport)
     if (impl == NULL) {
         return BC_ERR_NOMEM;
     }
-    if (parse_endpoint(transport->config.endpoint, host, sizeof(host), &port) != BC_OK) {
+    if (bc_parse_endpoint(transport->config.endpoint, host, sizeof(host), &port) != BC_OK) {
         free(impl);
         return BC_ERR_INVALID;
     }
@@ -64,13 +49,10 @@ static int udp_open(bc_transport_t *transport)
         return BC_ERR_IO;
     }
 
-    memset(&impl->remote, 0, sizeof(impl->remote));
-    impl->remote.sin_family = AF_INET;
-    impl->remote.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, host, &impl->remote.sin_addr) != 1) {
+    if (bc_fill_sockaddr_in(host, port, &impl->remote) != BC_OK) {
         close(transport->fd);
         free(impl);
-        return BC_ERR_INVALID;
+        return BC_ERR_IO;
     }
 
     transport->impl = impl;
@@ -89,7 +71,7 @@ static void udp_close(bc_transport_t *transport)
 
 static int udp_send(bc_transport_t *transport, const uint8_t *data, size_t len)
 {
-    bc_udp_impl_t *impl = transport->impl;
+    bc_udp_impl_t *impl = udp_impl(transport);
     ssize_t n = sendto(
         transport->fd,
         data,
@@ -107,10 +89,26 @@ static int udp_send(bc_transport_t *transport, const uint8_t *data, size_t len)
     return BC_ERR_IO;
 }
 
+static int udp_recv(bc_transport_t *transport, uint8_t *buf, size_t cap, size_t *out_len)
+{
+    ssize_t n = recvfrom(transport->fd, buf, cap, 0, NULL, NULL);
+
+    if (n > 0) {
+        *out_len = (size_t)n;
+        return BC_OK;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        *out_len = 0;
+        return BC_ERR_NOT_FOUND;
+    }
+    return BC_ERR_IO;
+}
+
 static const bc_transport_ops_t udp_ops = {
     .open = udp_open,
     .close = udp_close,
     .send = udp_send,
+    .recv = udp_recv,
 };
 
 int bc_udp_transport_init(bc_transport_t *transport, const bc_transport_config_t *cfg)

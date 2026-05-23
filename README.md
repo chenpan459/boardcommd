@@ -28,12 +28,17 @@ Applications
 
 ```text
 src/
-  daemon/     # boardcommd 服务进程
-  transport/  # UDP / TCP / UART 插件（libbc_transport.so）
-  log/        # 日志实现（头文件在 api/）
+  daemon/       # boardcommd 服务进程
+  transport/    # 传输插件（libbc_transport.so）
+    transport.h
+    tcp/        # TCP 传输
+    udp/        # UDP / KCP 传输
+      kcp/      # 上游 ikcp 实现
+    uart/       # UART 传输
+  log/          # 日志实现（头文件在 api/）
 
-api/          # 应用侧 SDK 对外头文件与库源码
-examples/     # 示例 / 测试程序
+api/            # 应用侧 SDK 对外头文件与库源码
+examples/       # 示例 / 测试程序
 ```
 
 ## 第三方应用集成
@@ -203,6 +208,19 @@ transport udp0 udp 192.168.1.20:9101 9100 0
 
 对端板如果要回发，则对端配置里的 `remote_ip:remote_port` 应该指向本板 IP 和本板监听端口。
 
+**UDP + KCP**（可靠传输，类型写 `udpkcp`）：
+
+```text
+# 板 A
+transport kcp0 udpkcp 192.168.1.20:9101 9100 0 9100
+# 板 B（endpoint 指向板 A，conv 必须与板 A 相同）
+transport kcp0 udpkcp 192.168.1.10:9100 9101 0 9100
+```
+
+- `endpoint` / `local_port` 含义与 UDP 相同。
+- 第 6 个字段为 KCP `conv`（会话 ID），两端必须一致；省略时用 `local_port`，再否则为 `1`。
+- 底层仍为 UDP 报文，应用层协议帧在 KCP 流之上，与裸 UDP 不互通。
+
 TCP 必须明确一端监听、一端连接；两端不能都配成 client，也不能都 listen 同一端口。
 
 推荐用第 6 个字段写角色（`server` / `client`，也支持 `listen` / `connect`）：
@@ -218,6 +236,27 @@ transport tcpc0 tcp 192.168.1.10:9300 0 0 client
 - **client**：`endpoint` 为要连接的 `host:port`；`local_port` 忽略。
 
 未写角色时保持兼容：`local_port > 0` 视为 server，否则为 client（易与 UDP 的 `local_port` 语义混淆，两块板对接时务必写 `server`/`client`）。
+
+TCP 传输层已实现：`accept` 后动态注册 epoll、发送队列与 `EPOLLOUT` 刷写、`TCP_NODELAY` / keepalive、client 断线指数退避重连、连接/断连日志。
+
+**UART（RS-232 / RS-485 兼容）**：
+
+```text
+# RS-232 全双工（默认）
+transport uart0 uart /dev/ttyS1 0 115200
+transport uart0 uart232 /dev/ttyUSB0 0 115200
+
+# RS-485 半双工，DE 控制 GPIO（第 6 字段为 GPIO 号）
+transport uart1 uart485 /dev/ttyS2 0 115200 17
+transport uart1 uart /dev/ttyS3 0 115200 485:18
+```
+
+| 模式 | 类型关键字 | 行为 |
+|------|------------|------|
+| RS-232 | `uart` / `uart232` | 全双工，无方向控制 |
+| RS-485 | `uart485` / `rs485` 或 extra `485` / `485:N` | 发送前拉高 DE，`tcdrain` 后拉低；未配 GPIO 时假定适配器自动换向 |
+
+RS-485 的 DE 脚通过 sysfs `/sys/class/gpio` 控制；设备节点消失时会自动退避重开串口。
 
 额外配置项：
 

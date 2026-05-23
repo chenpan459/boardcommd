@@ -67,6 +67,9 @@ int bc_transport_manager_init(bc_transport_manager_t *manager, const bc_config_t
         case BC_TRANSPORT_UART:
             rc = bc_uart_transport_init(transport, tcfg);
             break;
+        case BC_TRANSPORT_UDP_KCP:
+            rc = bc_udp_kcp_transport_init(transport, tcfg);
+            break;
         case BC_TRANSPORT_UDP:
         default:
             rc = bc_udp_transport_init(transport, tcfg);

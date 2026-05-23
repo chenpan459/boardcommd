@@ -11,12 +11,18 @@
 
 typedef enum {
     BC_TRANSPORT_UDP,
+    BC_TRANSPORT_UDP_KCP,
     BC_TRANSPORT_TCP,
     BC_TRANSPORT_UART,
 } bc_transport_type_t;
 
 /* TCP only: -1 = auto (local_port>0 => listen), 0 = client, 1 = server */
 #define BC_TCP_ROLE_AUTO (-1)
+
+/* UART: RS-232 full duplex vs RS-485 half duplex (DE GPIO) */
+#define BC_UART_MODE_232 0
+#define BC_UART_MODE_485 1
+#define BC_UART_GPIO_NONE (-1)
 
 typedef struct {
     char name[32];
@@ -25,6 +31,9 @@ typedef struct {
     int local_port;
     int baudrate;
     int tcp_listen;
+    int kcp_conv;
+    int uart_mode;
+    int rs485_de_gpio;
 } bc_transport_config_t;
 
 typedef struct {

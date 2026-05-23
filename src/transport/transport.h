@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "config.h"
+#include "reactor.h"
 
 typedef struct bc_transport bc_transport_t;
 
@@ -12,7 +13,9 @@ typedef struct {
     int (*open)(bc_transport_t *transport);
     void (*close)(bc_transport_t *transport);
     int (*send)(bc_transport_t *transport, const uint8_t *data, size_t len);
+    int (*recv)(bc_transport_t *transport, uint8_t *buf, size_t cap, size_t *out_len);
     int (*get_fds)(bc_transport_t *transport, int *fds, size_t *count);
+    int (*bind_reactor)(bc_transport_t *transport, bc_reactor_t *reactor, bc_reactor_cb cb, void *user);
     int (*handle_event)(bc_transport_t *transport, int fd, uint32_t events);
 } bc_transport_ops_t;
 
@@ -26,6 +29,7 @@ struct bc_transport {
 };
 
 int bc_udp_transport_init(bc_transport_t *transport, const bc_transport_config_t *cfg);
+int bc_udp_kcp_transport_init(bc_transport_t *transport, const bc_transport_config_t *cfg);
 int bc_tcp_transport_init(bc_transport_t *transport, const bc_transport_config_t *cfg);
 int bc_uart_transport_init(bc_transport_t *transport, const bc_transport_config_t *cfg);
 
