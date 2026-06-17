@@ -73,6 +73,24 @@ static uint32_t make_transfer_id(const char *topic, const char *path, uint32_t s
     return ~seed;
 }
 
+static const char *file_pkt_type_name(uint8_t type)
+{
+    switch (type) {
+    case BC_FILE_PKT_START:
+        return "START";
+    case BC_FILE_PKT_DATA:
+        return "DATA";
+    case BC_FILE_PKT_END:
+        return "END";
+    case BC_FILE_PKT_NACK:
+        return "NACK";
+    case BC_FILE_PKT_DONE:
+        return "DONE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 static ssize_t send_file_packet(
     int handle,
     const char *channel,
@@ -87,7 +105,7 @@ static ssize_t send_file_packet(
     bc_file_pkt_hdr_t hdr;
     bc_publish_opts_t opts = {
         .dst_node = 0,
-        .qos = BC_QOS_AT_LEAST_ONCE,
+        .qos = (type == BC_FILE_PKT_DATA) ? BC_QOS_AT_MOST_ONCE : BC_QOS_AT_LEAST_ONCE,
         .flags = 0,
     };
     size_t total;
@@ -118,12 +136,28 @@ static ssize_t send_file_packet(
             return n;
         }
         if (n == BC_ERR_NOMEM || n == BC_ERR_IO) {
+            if (attempt == 0 || attempt == BC_FILE_SEND_RETRY_MAX - 1) {
+                fprintf(
+                    stderr,
+                    "boardcomm file_send: write %s seq=%u failed rc=%zd attempt=%d/%d\n",
+                    file_pkt_type_name(type),
+                    value,
+                    n,
+                    attempt + 1,
+                    BC_FILE_SEND_RETRY_MAX);
+            }
             usleep(1000 * (useconds_t)(attempt + 1));
             continue;
         }
         return n;
     }
 
+    fprintf(
+        stderr,
+        "boardcomm file_send: write %s seq=%u exhausted retries; "
+        "check receiver is running first (boardcomm_file_recv) and route file.* transport is connected\n",
+        file_pkt_type_name(type),
+        value);
     return BC_ERR_IO;
 }
 
@@ -266,6 +300,10 @@ static int sender_handle_controls(
             continue;
         }
 
+        if (hdr.type == BC_FILE_PKT_START || hdr.type == BC_FILE_PKT_DATA || hdr.type == BC_FILE_PKT_END) {
+            continue;
+        }
+
         if (parse_file_v2_control(&hdr, extra, extra_len, BC_FILE_PKT_NACK, transfer_id) == BC_OK) {
             bc_file_cache_slot_t *slot;
 
@@ -355,12 +393,19 @@ static int send_file_path(
         }
     }
 
-    if (sizeof(uint16_t) * 2u + name_len + channel_len > sizeof(start_meta)) {
+    if (1u + sizeof(uint32_t) + sizeof(uint16_t) * 2u + name_len + channel_len > sizeof(start_meta)) {
         fclose(fp);
         return BC_ERR_INVALID;
     }
 
     transfer_id = make_transfer_id(topic, path, (uint32_t)st.st_size);
+    fprintf(
+        stderr,
+        "boardcomm file_send: begin transfer topic=%s file=%s size=%llu transfer=0x%08x\n",
+        topic,
+        path,
+        (unsigned long long)st.st_size,
+        transfer_id);
     rc = bc_subscribe_fd(handle, topic);
     if (rc != BC_OK) {
         fclose(fp);
@@ -391,6 +436,10 @@ static int send_file_path(
         start_meta,
         meta_len);
     if (n < 0) {
+        fprintf(
+            stderr,
+            "boardcomm file_send: START failed topic=%s (start receiver on peer before send)\n",
+            topic);
         fclose(fp);
         return (int)n;
     }
@@ -412,6 +461,13 @@ static int send_file_path(
             chunk,
             sizeof(transfer_id) + data_len);
         if (n < 0) {
+            fprintf(
+                stderr,
+                "boardcomm file_send: DATA failed seq=%u sent=%llu/%llu topic=%s\n",
+                seq,
+                (unsigned long long)seq * BC_FILE_DATA_BODY_MAX,
+                (unsigned long long)st.st_size,
+                topic);
             fclose(fp);
             return (int)n;
         }
@@ -453,7 +509,18 @@ static int send_file_path(
         return rc;
     }
 
-    for (int round = 0; round < BC_FILE_END_WAIT_ROUNDS; ++round) {
+    {
+        uint64_t file_mb = ((uint64_t)st.st_size + (1024u * 1024u - 1u)) / (1024u * 1024u);
+        int end_wait_rounds = BC_FILE_END_WAIT_ROUNDS;
+
+        if (file_mb > 0) {
+            int scaled = (int)(file_mb * 50);
+            if (scaled > end_wait_rounds) {
+                end_wait_rounds = scaled;
+            }
+        }
+
+    for (int round = 0; round < end_wait_rounds; ++round) {
         rc = sender_handle_controls(
             handle,
             channel,
@@ -478,10 +545,12 @@ static int send_file_path(
             }
         }
     }
+    }
 
     fprintf(
         stderr,
-        "boardcomm file_send: timeout waiting DONE transfer=0x%08x topic=%s\n",
+        "boardcomm file_send: timeout waiting DONE transfer=0x%08x topic=%s "
+        "(receiver may have stopped or network route is down)\n",
         transfer_id,
         topic);
     return BC_ERR_TIMEOUT;

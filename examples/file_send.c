@@ -39,7 +39,21 @@ int main(int argc, char **argv)
               ? bc_file_send_channel(handle, channel, topic, file_path)
               : bc_file_send(handle, topic, file_path));
     if (rc != BC_OK) {
-        BC_LOGE("file_send", "send failed rc=%d file=%s", rc, file_path);
+        if (rc == BC_ERR_IO) {
+            BC_LOGE(
+                "file_send",
+                "send failed rc=%d file=%s (see stderr: receiver not ready, route down, or mid-transfer disconnect)",
+                rc,
+                file_path);
+        } else if (rc == BC_ERR_TIMEOUT) {
+            BC_LOGE(
+                "file_send",
+                "send failed rc=%d file=%s (no DONE from receiver; check peer boardcomm_file_recv and route file.*)",
+                rc,
+                file_path);
+        } else {
+            BC_LOGE("file_send", "send failed rc=%d file=%s", rc, file_path);
+        }
         (void)bc_close(handle);
         bc_log_close();
         return 1;
