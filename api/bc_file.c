@@ -11,12 +11,14 @@
 #include <unistd.h>
 
 #define BC_FILE_SEND_RETRY_MAX 64
-#define BC_FILE_DATA_PACE_US 500
+/* NACK/retransmit handles loss; no per-chunk sleep on TCP (was 500us for bare UDP). */
+#define BC_FILE_DATA_PACE_US 0
+#define BC_FILE_DATA_RETRY_SPIN 200000u
 #define BC_FILE_PKT_FLAG_V2 0x01u
 #define BC_FILE_META_V2_VERSION 2u
 #define BC_FILE_PKT_NACK 4u
 #define BC_FILE_PKT_DONE 5u
-#define BC_FILE_DATA_BODY_MAX (BC_FILE_CHUNK_DATA_MAX - sizeof(uint32_t))
+#define BC_FILE_DATA_BODY_MAX BC_FILE_CHUNK_DATA_MAX
 #define BC_FILE_RETX_WINDOW 256u
 #define BC_FILE_CTRL_READ_TIMEOUT_MS 20
 #define BC_FILE_END_WAIT_ROUNDS 200
@@ -25,7 +27,7 @@ typedef struct {
     uint8_t valid;
     uint32_t seq;
     size_t len;
-    uint8_t data[sizeof(uint32_t) + BC_FILE_DATA_BODY_MAX];
+    uint8_t data[BC_FILE_DATA_BODY_MAX];
 } bc_file_cache_slot_t;
 
 typedef struct __attribute__((packed)) {
@@ -126,13 +128,31 @@ static ssize_t send_file_packet(
         total += extra_len;
     }
 
+    if (type == BC_FILE_PKT_DATA) {
+        uint32_t spin;
+
+        for (spin = 0; spin < BC_FILE_DATA_RETRY_SPIN; ++spin) {
+            ssize_t n = bc_write_ex(handle, channel, topic, payload, total, &opts);
+
+            if (n >= 0) {
+                if (BC_FILE_DATA_PACE_US > 0) {
+                    usleep(BC_FILE_DATA_PACE_US);
+                }
+                return n;
+            }
+            if (n != BC_ERR_NOMEM) {
+                return n;
+            }
+            usleep(50);
+        }
+        fprintf(stderr, "boardcomm file_send: DATA seq=%u backpressure timeout\n", value);
+        return BC_ERR_IO;
+    }
+
     for (attempt = 0; attempt < BC_FILE_SEND_RETRY_MAX; ++attempt) {
         ssize_t n = bc_write_ex(handle, channel, topic, payload, total, &opts);
 
         if (n >= 0) {
-            if (type == BC_FILE_PKT_DATA && BC_FILE_DATA_PACE_US > 0) {
-                usleep(BC_FILE_DATA_PACE_US);
-            }
             return n;
         }
         if (n == BC_ERR_NOMEM || n == BC_ERR_IO) {
@@ -338,6 +358,31 @@ static int sender_handle_controls(
     }
 }
 
+static void log_send_throughput(
+    const struct timespec *t0,
+    uint64_t bytes,
+    uint32_t chunks,
+    const char *phase)
+{
+    struct timespec t1;
+    double sec;
+
+    (void)clock_gettime(CLOCK_MONOTONIC, &t1);
+    sec = (double)(t1.tv_sec - t0->tv_sec) + (double)(t1.tv_nsec - t0->tv_nsec) / 1000000000.0;
+    if (sec < 0.001) {
+        sec = 0.001;
+    }
+    fprintf(
+        stderr,
+        "boardcomm file_send: %s %llu bytes in %.2fs (%.2f MB/s, %.2f Mbps, chunks=%u)\n",
+        phase,
+        (unsigned long long)bytes,
+        sec,
+        ((double)bytes / sec) / (1024.0 * 1024.0),
+        ((double)bytes * 8.0) / sec / 1000000.0,
+        chunks);
+}
+
 static int send_file_path(
     int handle,
     const char *channel,
@@ -345,11 +390,12 @@ static int send_file_path(
     const char *path)
 {
     struct stat st;
-    FILE *fp;
-    uint8_t chunk[sizeof(uint32_t) + BC_FILE_DATA_BODY_MAX];
+    int fd_in = -1;
+    uint8_t chunk[BC_FILE_DATA_BODY_MAX];
     uint32_t crc;
     uint32_t seq = 0;
     uint32_t transfer_id;
+    uint64_t bytes_sent = 0;
     bc_file_cache_slot_t cache[BC_FILE_RETX_WINDOW];
     size_t name_len;
     const char *name;
@@ -357,11 +403,14 @@ static int send_file_path(
     int rc;
     int done_seen;
     int resent_any;
+    struct timespec t0;
+    struct timespec t1;
 
     if (handle < 0 || topic == NULL || topic[0] == '\0' || path == NULL || path[0] == '\0') {
         return BC_ERR_INVALID;
     }
     memset(cache, 0, sizeof(cache));
+    (void)clock_gettime(CLOCK_MONOTONIC, &t0);
 
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
         return BC_ERR_IO;
@@ -370,8 +419,8 @@ static int send_file_path(
         return BC_ERR_INVALID;
     }
 
-    fp = fopen(path, "rb");
-    if (fp == NULL) {
+    fd_in = open(path, O_RDONLY);
+    if (fd_in < 0) {
         return BC_ERR_IO;
     }
 
@@ -382,19 +431,19 @@ static int send_file_path(
     name = basename_only(path);
     name_len = strlen(name);
     if (name_len == 0 || name_len > BC_FILE_NAME_MAX) {
-        fclose(fp);
+        close(fd_in);
         return BC_ERR_INVALID;
     }
     if (channel != NULL && channel[0] != '\0') {
         channel_len = strlen(channel);
         if (channel_len == 0 || channel_len >= BC_MAX_CHANNEL_LEN) {
-            fclose(fp);
+            close(fd_in);
             return BC_ERR_INVALID;
         }
     }
 
     if (1u + sizeof(uint32_t) + sizeof(uint16_t) * 2u + name_len + channel_len > sizeof(start_meta)) {
-        fclose(fp);
+        close(fd_in);
         return BC_ERR_INVALID;
     }
 
@@ -408,7 +457,7 @@ static int send_file_path(
         transfer_id);
     rc = bc_subscribe_fd(handle, topic);
     if (rc != BC_OK) {
-        fclose(fp);
+        close(fd_in);
         return rc;
     }
     meta_len = 0;
@@ -440,16 +489,15 @@ static int send_file_path(
             stderr,
             "boardcomm file_send: START failed topic=%s (start receiver on peer before send)\n",
             topic);
-        fclose(fp);
+        close(fd_in);
         return (int)n;
     }
 
     crc = 0xffffffffu;
-    while ((n = (ssize_t)fread(chunk + sizeof(transfer_id), 1, BC_FILE_DATA_BODY_MAX, fp)) > 0) {
+    while ((n = read(fd_in, chunk, sizeof(chunk))) > 0) {
         size_t data_len = (size_t)n;
 
-        memcpy(chunk, &transfer_id, sizeof(transfer_id));
-        crc = bc_file_crc32_update(crc, chunk + sizeof(transfer_id), data_len);
+        crc = bc_file_crc32_update(crc, chunk, data_len);
 
         n = send_file_packet(
             handle,
@@ -459,42 +507,30 @@ static int send_file_path(
             BC_FILE_PKT_FLAG_V2,
             seq,
             chunk,
-            sizeof(transfer_id) + data_len);
+            data_len);
         if (n < 0) {
             fprintf(
                 stderr,
                 "boardcomm file_send: DATA failed seq=%u sent=%llu/%llu topic=%s\n",
                 seq,
-                (unsigned long long)seq * BC_FILE_DATA_BODY_MAX,
+                (unsigned long long)bytes_sent,
                 (unsigned long long)st.st_size,
                 topic);
-            fclose(fp);
+            close(fd_in);
             return (int)n;
         }
-        store_cache_slot(cache, BC_FILE_RETX_WINDOW, seq, chunk, sizeof(transfer_id) + data_len);
-        rc = sender_handle_controls(
-            handle,
-            channel,
-            topic,
-            transfer_id,
-            seq + 1u,
-            cache,
-            BC_FILE_RETX_WINDOW,
-            0,
-            NULL,
-            NULL);
-        if (rc != BC_OK) {
-            fclose(fp);
-            return rc;
-        }
+        store_cache_slot(cache, BC_FILE_RETX_WINDOW, seq, chunk, data_len);
+        bytes_sent += data_len;
         seq++;
     }
 
-    if (ferror(fp)) {
-        fclose(fp);
+    if (n < 0) {
+        close(fd_in);
         return BC_ERR_IO;
     }
-    fclose(fp);
+    close(fd_in);
+    fprintf(stderr, "boardcomm file_send: payload complete, waiting DONE...\n");
+    log_send_throughput(&t0, bytes_sent, seq, "payload");
 
     rc = (int)send_file_packet(
         handle,
@@ -536,6 +572,7 @@ static int send_file_path(
             return rc;
         }
         if (done_seen != 0) {
+            log_send_throughput(&t0, bytes_sent, seq, "complete");
             return BC_OK;
         }
         if (resent_any != 0) {
@@ -717,21 +754,19 @@ static int recv_file_path(
             data_ptr = extra;
             data_len = extra_len;
             if (v2_mode) {
-                if ((hdr.reserved & BC_FILE_PKT_FLAG_V2) == 0 || extra_len <= sizeof(uint32_t)) {
+                if ((hdr.reserved & BC_FILE_PKT_FLAG_V2) == 0 || extra_len == 0) {
                     fprintf(stderr, "boardcomm file_recv: ignore invalid v2 DATA topic=%s\n", topic);
                     continue;
                 }
-                memcpy(&pkt_transfer_id, extra, sizeof(pkt_transfer_id));
-                if (pkt_transfer_id != transfer_id) {
-                    fprintf(
-                        stderr,
-                        "boardcomm file_recv: ignore DATA transfer_id mismatch got=0x%08x expect=0x%08x\n",
-                        pkt_transfer_id,
-                        transfer_id);
-                    continue;
+                data_ptr = extra;
+                data_len = extra_len;
+                if (extra_len > sizeof(uint32_t)) {
+                    memcpy(&pkt_transfer_id, extra, sizeof(pkt_transfer_id));
+                    if (pkt_transfer_id == transfer_id) {
+                        data_ptr = extra + sizeof(uint32_t);
+                        data_len = extra_len - sizeof(uint32_t);
+                    }
                 }
-                data_ptr = extra + sizeof(uint32_t);
-                data_len = extra_len - sizeof(uint32_t);
             }
             if (data_len == 0) {
                 fprintf(stderr, "boardcomm file_recv: ignore empty DATA chunk topic=%s\n", topic);

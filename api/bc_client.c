@@ -158,6 +158,20 @@ int bc_open(const char *socket_path)
     return fd;
 }
 
+int bc_open_with_shm(const char *socket_path)
+{
+    int fd = bc_open(socket_path);
+
+    if (fd < 0) {
+        return fd;
+    }
+    g_fd = fd;
+    if (bc_enable_shm(fd) != BC_OK) {
+        /* SHM is optional; socket IPC still works. */
+    }
+    return fd;
+}
+
 int bc_close(int handle)
 {
     if (handle < 0) {
@@ -620,7 +634,9 @@ int bc_enable_shm(int handle)
     if (handle < 0) {
         return BC_ERR_INVALID;
     }
-    if (handle != g_fd) {
+    if (g_fd < 0) {
+        g_fd = handle;
+    } else if (handle != g_fd) {
         return BC_ERR_INVALID;
     }
 

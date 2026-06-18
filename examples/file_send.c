@@ -21,7 +21,7 @@ int main(int argc, char **argv)
 
     (void)bc_log_init("log", "boardcomm_file_send");
 
-    handle = bc_open(NULL);
+    handle = bc_open_with_shm(NULL);
     if (handle < 0) {
         BC_LOGE("file_send", "failed to connect to boardcommd");
         bc_log_close();

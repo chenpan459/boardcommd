@@ -12,6 +12,7 @@ extern "C" {
 typedef struct bc_context bc_context_t;
 
 int bc_open(const char *socket_path);
+int bc_open_with_shm(const char *socket_path);
 int bc_close(int handle);
 
 ssize_t bc_write(

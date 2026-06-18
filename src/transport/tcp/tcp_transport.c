@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 #define BC_TCP_TAG "tcp"
-#define BC_TCP_SEND_CAP (BC_MAX_FRAME_LEN * 8)
+#define BC_TCP_SEND_CAP (BC_MAX_FRAME_LEN * 64)
 #define BC_TCP_RECONNECT_MS_INIT 1000
 #define BC_TCP_RECONNECT_MS_MAX 30000
 #define BC_TCP_KEEPALIVE_IDLE 30
@@ -87,8 +87,8 @@ static uint32_t tcp_conn_events(const bc_tcp_impl_t *impl)
 static int tcp_apply_socket_opts(int fd)
 {
     int on = 1;
-    int sndbuf = 32 * 1024;
-    int rcvbuf = 32 * 1024;
+    int sndbuf = 512 * 1024;
+    int rcvbuf = 512 * 1024;
 
     (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
     int keepidle = BC_TCP_KEEPALIVE_IDLE;
